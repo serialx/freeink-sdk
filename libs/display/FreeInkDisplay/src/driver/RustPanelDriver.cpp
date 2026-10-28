@@ -6,6 +6,10 @@
 #include <cstdlib>
 
 #include "Uc8253X3Driver.h"
+extern "C" uint32_t xp_display_platform_increment(uint32_t* value) {
+  return __atomic_add_fetch(value, 1u, __ATOMIC_ACQ_REL);
+}
+
 namespace freeink {
 const Uc8253X3Config& uc8253X3DefaultConfig() {
   static const uint8_t* direct[5];
