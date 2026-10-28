@@ -7,6 +7,7 @@
 #include <array>
 #include <cstring>
 
+#if !defined(FREEINK_RUST_PANEL) || !FREEINK_RUST_PANEL
 namespace freeink {
 namespace {
 constexpr uint8_t CMD_SOFT_RESET = 0x12;
@@ -505,12 +506,9 @@ uint16_t PaperMonoDriver::makeTriLut(uint8_t out[111], bool bgTopUp) const {
   // Every boundary at which a class changes voltage. Between two consecutive
   // boundaries all entries have a constant source selection and fit one group.
   uint16_t bounds[7] = {
-      0,
-      start[0],
-      start[1],
-      static_cast<uint16_t>(start[1] + whiteFor[1]),
-      start[2],
-      static_cast<uint16_t>(start[2] + whiteFor[2]),
+      0,        start[0],
+      start[1], static_cast<uint16_t>(start[1] + whiteFor[1]),
+      start[2], static_cast<uint16_t>(start[2] + whiteFor[2]),
       tail,
   };
   sortAscending(bounds, 7);
@@ -591,8 +589,7 @@ bool PaperMonoDriver::runOtpUpdate(EpdBus& bus, const uint8_t* bwTarget, bool fo
     const uint8_t oldNonWhite = _glassNonWhite[i];
     const uint8_t oldBlack = _glassBlack[i];
     const uint8_t oldGray = static_cast<uint8_t>(oldNonWhite & ~oldBlack);
-    const uint8_t changedMask =
-        static_cast<uint8_t>((oldNonWhite ^ targetBlack) | (oldBlack ^ targetBlack));
+    const uint8_t changedMask = static_cast<uint8_t>((oldNonWhite ^ targetBlack) | (oldBlack ^ targetBlack));
     changedBits |= changedMask;
 #ifdef ENABLE_SERIAL_LOG
     changed += popcount8(changedMask);
@@ -630,8 +627,7 @@ bool PaperMonoDriver::runOtpUpdate(EpdBus& bus, const uint8_t* bwTarget, bool fo
   return true;
 }
 
-bool PaperMonoDriver::runUpdate(EpdBus& bus, const uint8_t* bwTarget, bool useGray, bool corrective,
-                                bool overlayOnly) {
+bool PaperMonoDriver::runUpdate(EpdBus& bus, const uint8_t* bwTarget, bool useGray, bool corrective, bool overlayOnly) {
   if (!useGray) {
     const bool otpRan = runOtpUpdate(bus, bwTarget, corrective);
     if (otpRan) _displayCommitted = true;
@@ -676,8 +672,7 @@ bool PaperMonoDriver::runUpdate(EpdBus& bus, const uint8_t* bwTarget, bool useGr
         corrective ? 0xFFu : (overlayOnly ? changedMask : static_cast<uint8_t>(changedMask | q24));
     changedBits |= corrective ? 0xFFu : changedMask;
 #ifdef ENABLE_SERIAL_LOG
-    changed += corrective ? 8u
-                          : popcount8(changedMask);
+    changed += corrective ? 8u : popcount8(changedMask);
     driven += popcount8(driveMask);
 #endif
     _sel24[i] = static_cast<uint8_t>(driveMask & ~(q24 ^ q26));
@@ -727,13 +722,13 @@ bool PaperMonoDriver::runUpdate(EpdBus& bus, const uint8_t* bwTarget, bool useGr
   _panelHasGray = useGray && (_grayLsbReady || _grayMsbReady);
 
 #ifdef ENABLE_SERIAL_LOG
-  Serial.printf("[%lu] SSD1677 update: stages=%u frames=%u+%u changed=%lu drive=%lu clean=%lu gray=%u full=%u "
-                "elapsed=%lums\n",
-                millis(), static_cast<unsigned>(stages), static_cast<unsigned>(firstFrames),
-                static_cast<unsigned>(cleanFrames), static_cast<unsigned long>(changed),
-                static_cast<unsigned long>(driven),
-                static_cast<unsigned long>(cleanedPixels),
-                static_cast<unsigned>(useGray), static_cast<unsigned>(corrective), millis() - started);
+  Serial.printf(
+      "[%lu] SSD1677 update: stages=%u frames=%u+%u changed=%lu drive=%lu clean=%lu gray=%u full=%u "
+      "elapsed=%lums\n",
+      millis(), static_cast<unsigned>(stages), static_cast<unsigned>(firstFrames), static_cast<unsigned>(cleanFrames),
+      static_cast<unsigned long>(changed), static_cast<unsigned long>(driven),
+      static_cast<unsigned long>(cleanedPixels), static_cast<unsigned>(useGray), static_cast<unsigned>(corrective),
+      millis() - started);
 #else
   (void)firstFrames;
   (void)cleanFrames;
@@ -867,7 +862,8 @@ void PaperMonoDriver::displayWindow(EpdBus& bus, const uint8_t* fb, const uint8_
   if (turnOff) powerOffController(bus);
 }
 
-bool PaperMonoDriver::displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode, bool turnOff) {
+bool PaperMonoDriver::displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode,
+                                   bool turnOff) {
   display(bus, fb, prev, mode, turnOff);
   return false;
 }
@@ -949,7 +945,7 @@ bool PaperMonoDriver::markGrayRows(GrayPlane plane, uint16_t yStart, uint16_t nu
 }
 
 void PaperMonoDriver::writeGrayscalePlaneStrip(EpdBus& bus, GrayPlane plane, const uint8_t* rows, uint16_t yStart,
-                                             uint16_t numRows) {
+                                               uint16_t numRows) {
   (void)bus;
   if (!rows || numRows == 0 || yStart + numRows > HEIGHT || !allocateBuffers()) return;
   uint8_t* target = plane == GrayPlane::Lsb ? _grayLsb : _grayMsb;
@@ -974,7 +970,7 @@ void PaperMonoDriver::prepareGrayscaleTarget(const uint8_t* bw) {
 }
 
 void PaperMonoDriver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, const unsigned char* lut,
-                                bool factoryMode) {
+                                  bool factoryMode) {
   (void)turnOff;
   (void)lut;
   (void)factoryMode;
@@ -991,8 +987,7 @@ void PaperMonoDriver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, 
     return;
   }
 
-  const bool useGray = _grayLsbReady && _grayMsbReady &&
-                       _grayLsbGeneration == _renderGeneration &&
+  const bool useGray = _grayLsbReady && _grayMsbReady && _grayLsbGeneration == _renderGeneration &&
                        _grayMsbGeneration == _renderGeneration;
   if (_pendingTri) {
     commitPending(bus, useGray);
@@ -1016,7 +1011,7 @@ void PaperMonoDriver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, 
 }
 
 void PaperMonoDriver::displayGrayCalibration(EpdBus& bus, const uint8_t* fb, uint16_t customX, uint16_t customY,
-                                           uint16_t customW, uint16_t customH) {
+                                             uint16_t customW, uint16_t customH) {
   // There is a single gray tone and a single waveform now, so a side-by-side
   // "reference vs current" split has nothing left to compare. Render the whole
   // frame through the production path instead, driving every pixel so the
@@ -1030,8 +1025,7 @@ void PaperMonoDriver::displayGrayCalibration(EpdBus& bus, const uint8_t* fb, uin
   _pendingTri = true;
   _pendingCorrective = true;
   _pendingGeneration = _renderGeneration;
-  const bool useGray = _grayLsbReady && _grayMsbReady &&
-                       _grayLsbGeneration == _renderGeneration &&
+  const bool useGray = _grayLsbReady && _grayMsbReady && _grayLsbGeneration == _renderGeneration &&
                        _grayMsbGeneration == _renderGeneration;
   commitPending(bus, useGray);
 }
@@ -1050,8 +1044,7 @@ void PaperMonoDriver::cleanupGrayscaleBuffers(EpdBus& bus, const uint8_t* bw) {
   // displayGray() bailed without consuming the stashed target (no selectors
   // were ever staged, for instance). The frame must still reach the panel.
   if (bw && _pendingBw) memcpy(_pendingBw, bw, BUFFER_SIZE);
-  const bool useGray = _grayLsbReady && _grayMsbReady &&
-                       _grayLsbGeneration == _renderGeneration &&
+  const bool useGray = _grayLsbReady && _grayMsbReady && _grayLsbGeneration == _renderGeneration &&
                        _grayMsbGeneration == _renderGeneration;
   commitPending(bus, useGray);
 }
@@ -1137,3 +1130,34 @@ void PaperMonoDriver::deepSleep(EpdBus& bus) {
 }
 
 }  // namespace freeink
+
+#else
+namespace freeink {
+namespace {
+alignas(XP_DISPLAY_STATE_ALIGN) uint8_t rustState[XP_DISPLAY_PAPER_MONO_STATE_BYTES];
+DRAM_ATTR uint8_t rustScratch[16384];
+const XpDisplayRetainedConfig rustConfig{rustScratch, sizeof(rustScratch),
+#ifdef ENABLE_SERIAL_LOG
+                                         1
+#else
+                                         0
+#endif
+};
+}  // namespace
+PaperMonoDriver::PaperMonoDriver()
+    : RustPanelDriver(XP_DISPLAY_PAPER_MONO, rustState, sizeof(rustState),
+                      BoardConfig::ACTIVE.orientation.mirrorX && BoardConfig::ACTIVE.orientation.mirrorY ? 1 : 0,
+                      &rustConfig, sizeof(rustConfig)) {}
+void PaperMonoDriver::setGrayParams(const PaperMonoGrayParams& params) {
+  controllerExtra(XP_DISPLAY_PAPER_SET_GRAY, &params.lightFrames, sizeof(params.lightFrames));
+}
+void PaperMonoDriver::resetGray() { controllerExtra(XP_DISPLAY_PAPER_RESET_GRAY, nullptr, 0); }
+PaperMonoDriver& paperMonoDriver() {
+  static PaperMonoDriver driver;
+  return driver;
+}
+void paperMonoSetGrayParams(const PaperMonoGrayParams& params) { paperMonoDriver().setGrayParams(params); }
+void paperMonoAbortGray() { paperMonoDriver().abortGray(); }
+void paperMonoResetGray() { paperMonoDriver().resetGray(); }
+}  // namespace freeink
+#endif

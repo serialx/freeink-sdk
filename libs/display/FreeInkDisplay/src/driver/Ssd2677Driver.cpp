@@ -6,6 +6,7 @@
 
 #include <cstring>
 
+#if !defined(FREEINK_RUST_PANEL) || !FREEINK_RUST_PANEL
 #include "../lut/Ssd2677Luts.h"
 #include "esp_heap_caps.h"
 
@@ -115,7 +116,8 @@ void Ssd2677Driver::initPanel(EpdBus& bus) {
   }
   bus.waitBusy(" SSD2677 reset");
   const InitCmd* list = isSticky() ? kStickyInit : kPiccoInit;
-  const size_t count = isSticky() ? sizeof(kStickyInit) / sizeof(kStickyInit[0]) : sizeof(kPiccoInit) / sizeof(kPiccoInit[0]);
+  const size_t count =
+      isSticky() ? sizeof(kStickyInit) / sizeof(kStickyInit[0]) : sizeof(kPiccoInit) / sizeof(kPiccoInit[0]);
   for (size_t i = 0; i < count; ++i) {
     const InitCmd& c = list[i];
     bus.cmd(c.cmd);
@@ -325,4 +327,18 @@ PanelDriver& ssd2677Driver() {
 
 }  // namespace freeink
 
+#else
+#include "RustPanelDriver.h"
+namespace freeink {
+PanelDriver& ssd2677Driver() {
+  alignas(XP_DISPLAY_STATE_ALIGN) static uint8_t state[XP_DISPLAY_SSD2677_STATE_BYTES];
+  static uint8_t scratch[1024];
+  static const XpDisplayRetainedConfig config{scratch, sizeof(scratch), 0};
+  static RustPanelDriver driver(XP_DISPLAY_SSD2677, state, sizeof(state),
+                                BoardConfig::ACTIVE.board == BoardConfig::Board::Sticky ? 1 : 0, &config,
+                                sizeof(config));
+  return driver;
+}
+}  // namespace freeink
+#endif
 #endif  // FREEINK_DEVICE_PICCO || FREEINK_DEVICE_STICKY

@@ -6,11 +6,12 @@
 namespace freeink {
 class RustPanelDriver : public PanelDriver {
  public:
-  explicit RustPanelDriver(uint32_t controller);
+  RustPanelDriver(uint32_t controller, void* storage, uint32_t storageSize, uint32_t variant, const void* config,
+                  uint32_t configSize);
   ~RustPanelDriver() override;
   uint32_t spiHz() const override;
-  BusyPolarity busyPolarity() const override { return busyPolarity_; }
-  PanelGeometry geometry() const override { return geometry_; }
+  BusyPolarity busyPolarity() const override;
+  PanelGeometry geometry() const override;
   GrayscaleCapabilities grayscaleCapabilities(GrayscaleMode mode = GrayscaleMode::Overlay) const override;
   bool supportsAsyncDisplay() const override;
   bool postRefreshAborted() const override;
@@ -49,15 +50,17 @@ class RustPanelDriver : public PanelDriver {
   void setHoldPeriodicFull(bool hold) override;
   void setCustomLut(EpdBus& bus, bool enabled, const unsigned char* lut) override;
 
+ protected:
+  void controllerExtra(uint32_t operation, const void* payload, uint32_t size);
+
  private:
   XpDisplayRequest request(uint32_t operation) const;
-  uint32_t invoke(EpdBus* bus, XpDisplayRequest request) const;
-  alignas(XP_DISPLAY_STATE_ALIGN) mutable uint8_t state_[XP_DISPLAY_STATE_BYTES]{};
-  PanelGeometry geometry_{};
-  bool initialized_ = false;
-  BusyPolarity busyPolarity_ = BusyPolarity::X3TwoPhase;
-  uint32_t defaultSpiHz_ = 16000000;
-  uint16_t lutBytes_ = 0;
+  uint32_t invoke(EpdBus* bus, const XpDisplayRequest& request) const;
+  uint32_t invoke(EpdBus* bus, uint32_t operation) const;
+  void* storage_ = nullptr;
+  uint16_t width_ = 0;
+  uint16_t height_ = 0;
+  uint8_t controller_ = 0;
 };
 PanelDriver& rustUc8253X3Driver();
 PanelDriver& rustSsd1677Driver();

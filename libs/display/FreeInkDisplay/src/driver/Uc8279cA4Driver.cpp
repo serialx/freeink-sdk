@@ -1,3 +1,4 @@
+#if !defined(FREEINK_RUST_PANEL) || !FREEINK_RUST_PANEL
 #include "Uc8279cA4Driver.h"
 
 #include <BoardConfig.h>
@@ -414,3 +415,5 @@ PanelDriver& uc8279cA4Driver() {
 }
 
 }  // namespace freeink
+
+#endif
