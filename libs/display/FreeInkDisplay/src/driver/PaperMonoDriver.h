@@ -3,6 +3,9 @@
 #include <atomic>
 
 #include "PanelDriver.h"
+#if defined(FREEINK_RUST_PANEL) && FREEINK_RUST_PANEL
+#include "RustPanelDriver.h"
+#endif
 
 namespace freeink {
 
@@ -35,6 +38,15 @@ struct PaperMonoGrayParams {
   uint8_t frameRate = 0;
 };
 
+#if defined(FREEINK_RUST_PANEL) && FREEINK_RUST_PANEL
+class PaperMonoDriver final : public RustPanelDriver {
+ public:
+  PaperMonoDriver();
+  void setGrayParams(const PaperMonoGrayParams& params);
+  void resetGray();
+  void abortGray() { abortPostRefresh(); }
+};
+#else
 class PaperMonoDriver final : public PanelDriver {
  public:
   uint32_t spiHz() const override;
@@ -94,9 +106,9 @@ class PaperMonoDriver final : public PanelDriver {
   struct TriParams {
     // One-shot W/G/B sweep. The three per-class white lengths are derived from
     // these so that each class's net V*frames is exactly zero; see makeTriLut().
-    uint8_t preUp = 16;      // activation kick; also hosts the entry-0 top-up
-    uint8_t tGray = 24;      // weak-rail (+5 V) frames that develop the middle tone
-    uint8_t tBlack = 32;     // strong-rail (+15 V) frames that develop black
+    uint8_t preUp = 16;           // activation kick; also hosts the entry-0 top-up
+    uint8_t tGray = 24;           // weak-rail (+5 V) frames that develop the middle tone
+    uint8_t tBlack = 32;          // strong-rail (+15 V) frames that develop black
     uint8_t postCleanCycles = 0;  // retired; nonzero only for lab experiments
   };
 
@@ -160,14 +172,14 @@ class PaperMonoDriver final : public PanelDriver {
 
   // All logical raster order; writePlane() applies the 180-degree mount
   // transform on the way out.
-  uint8_t* _lastBw = nullptr;    // last committed two-level target
-  uint8_t* _pendingBw = nullptr; // stashed target awaiting its activation
-  uint8_t* _grayLsb = nullptr;   // staged dark selector
-  uint8_t* _grayMsb = nullptr;   // staged light selector
+  uint8_t* _lastBw = nullptr;         // last committed two-level target
+  uint8_t* _pendingBw = nullptr;      // stashed target awaiting its activation
+  uint8_t* _grayLsb = nullptr;        // staged dark selector
+  uint8_t* _grayMsb = nullptr;        // staged light selector
   uint8_t* _glassNonWhite = nullptr;  // on-glass q24: pixel is not white
   uint8_t* _glassBlack = nullptr;     // on-glass q26: pixel is black
-  uint8_t* _sel24 = nullptr;     // LUT selector plane written to RAM 0x24
-  uint8_t* _sel26 = nullptr;     // LUT selector plane written to RAM 0x26
+  uint8_t* _sel24 = nullptr;          // LUT selector plane written to RAM 0x24
+  uint8_t* _sel26 = nullptr;          // LUT selector plane written to RAM 0x26
   static constexpr uint16_t GRAY_ROWS = 480;
   static constexpr uint16_t GRAY_COVERAGE_BYTES = GRAY_ROWS / 8;
   uint8_t _grayLsbCoverage[GRAY_COVERAGE_BYTES]{};
@@ -175,6 +187,8 @@ class PaperMonoDriver final : public PanelDriver {
   uint16_t _grayLsbRowsCovered = 0;
   uint16_t _grayMsbRowsCovered = 0;
 };
+
+#endif
 
 PaperMonoDriver& paperMonoDriver();
 void paperMonoSetGrayParams(const PaperMonoGrayParams& params);

@@ -70,6 +70,24 @@ const char* waitTag(uint32_t tag) {
       return " X3_BW_TARGET_DRF";
     case XP_DISPLAY_TAG_X3_POWER_DOWN:
       return " X3 power-down";
+    case XP_DISPLAY_TAG_SSD2677_RESET:
+      return " SSD2677 reset";
+    case XP_DISPLAY_TAG_SSD2677_INIT:
+      return " SSD2677 init";
+    case XP_DISPLAY_TAG_SSD2677_LATCH:
+      return " SSD2677 latch";
+    case XP_DISPLAY_TAG_SSD2677_ON:
+      return " SSD2677 power on";
+    case XP_DISPLAY_TAG_SSD2677_OFF:
+      return " SSD2677 power off";
+    case XP_DISPLAY_TAG_SSD2677_REFRESH:
+      return "refresh";
+    case XP_DISPLAY_TAG_PAPER_RESET:
+      return "PaperMono reset";
+    case XP_DISPLAY_TAG_PAPER_REFRESH:
+      return "PaperMono refresh";
+    case XP_DISPLAY_TAG_PAPER_IDLE:
+      return "PaperMono idle";
     default:
       return nullptr;
   }
@@ -98,15 +116,45 @@ XpDisplayBus busTable(BusContext& ctx) {
           [](void*, uint32_t us) { delayMicroseconds(us); },
           [](void*) -> uint32_t { return millis(); },
           [](void*, uint32_t, uint32_t) -> uint32_t { return 0; },
-          nullptr};
+          [](void*, uint32_t event, uint32_t a, uint32_t b, uint32_t c, uint32_t d, const uint8_t*, uint32_t) {
+#ifdef ENABLE_SERIAL_LOG
+            switch (event) {
+              case XP_DISPLAY_DIAG_PAPER_OTP:
+                Serial.printf("[%lu] SSD1677 OTP B/W: changed=%lu forced=%u elapsed=%lums\n", millis(),
+                              static_cast<unsigned long>(a), static_cast<unsigned>(b), millis() - c);
+                break;
+              case XP_DISPLAY_DIAG_PAPER_TRI:
+                Serial.printf(
+                    "[%lu] SSD1677 update: stages=%u frames=%u+%u changed=%lu drive=%lu clean=%lu gray=%u full=%u "
+                    "elapsed=%lums\n",
+                    millis(), 1u, static_cast<unsigned>(c & 0xFFFFu), 0u, static_cast<unsigned long>(a),
+                    static_cast<unsigned long>(b), 0ul, 1u, static_cast<unsigned>(c >> 16), millis() - d);
+                break;
+              default:
+                break;
+            }
+#endif
+          }};
 }
 }  // namespace
-RustPanelDriver::RustPanelDriver(uint32_t controller) {
+RustPanelDriver::RustPanelDriver(uint32_t controller) : RustPanelDriver(controller, nullptr, 0, 0, nullptr, 0) {}
+RustPanelDriver::RustPanelDriver(uint32_t controller, void* storage, uint32_t storageSize, uint32_t variant,
+                                 const void* controllerConfig, uint32_t configSize) {
+  storage_ = storage ? storage : state_;
+  if (!storage) storageSize = sizeof(state_);
+  controller_ = controller;
   const auto& board = BoardConfig::ACTIVE;
   geometry_ = {board.displayWidth, board.displayHeight, static_cast<uint16_t>(board.displayWidth / 8),
                static_cast<uint32_t>(board.displayWidth / 8) * board.displayHeight};
-  XpDisplayConfig config{
-      XP_DISPLAY_ABI_VERSION, sizeof(XpDisplayConfig), controller, 0, geometry_.width, geometry_.height, 0, nullptr, 0};
+  XpDisplayConfig config{XP_DISPLAY_ABI_VERSION,
+                         sizeof(XpDisplayConfig),
+                         controller,
+                         variant,
+                         geometry_.width,
+                         geometry_.height,
+                         0,
+                         controllerConfig,
+                         configSize};
 #ifdef FREEINK_UC8253_X3_CONFIG
   static const uint8_t* direct[5];
   static const XpDisplayX3Config custom = [] {
@@ -131,17 +179,34 @@ RustPanelDriver::RustPanelDriver(uint32_t controller) {
     raw.lut_len = source.lutLen;
     return raw;
   }();
-  config.controller_config = &custom;
-  config.controller_config_size = sizeof(custom);
+  if (controller == XP_DISPLAY_UC8253_X3) {
+    config.controller_config = &custom;
+    config.controller_config_size = sizeof(custom);
+  }
 #endif
   const XpDisplayInitOptions options{XP_DISPLAY_INIT_OPTIONS_VERSION, sizeof(XpDisplayInitOptions), 1, &platform};
-  initialized_ = xp_display_init_v2(state_, sizeof(state_), &config, &options) == XP_DISPLAY_OK;
+  initialized_ = xp_display_init_v2(storage_, storageSize, &config, &options) == XP_DISPLAY_OK;
 }
 RustPanelDriver::~RustPanelDriver() {
-  if (initialized_) xp_display_drop(state_);
+  if (initialized_) xp_display_drop(storage_);
+}
+void RustPanelDriver::controllerExtra(uint32_t operation, const void* payload, uint32_t size) {
+  if (initialized_) xp_display_extra(storage_, operation, payload, size, 1);
+}
+BusyPolarity RustPanelDriver::busyPolarity() const {
+  switch (controller_) {
+    case XP_DISPLAY_SSD2677:
+      return BusyPolarity::ActiveLow;
+    case XP_DISPLAY_PAPER_MONO:
+      return BusyPolarity::ActiveHigh;
+    default:
+      return BusyPolarity::X3TwoPhase;
+  }
 }
 uint32_t RustPanelDriver::spiHz() const {
-  return BoardConfig::ACTIVE.displaySpiHz != 0 ? BoardConfig::ACTIVE.displaySpiHz : 16000000;
+  return BoardConfig::ACTIVE.displaySpiHz != 0
+             ? BoardConfig::ACTIVE.displaySpiHz
+             : (controller_ == XP_DISPLAY_SSD2677 || controller_ == XP_DISPLAY_PAPER_MONO ? 20000000 : 16000000);
 }
 XpDisplayRequest RustPanelDriver::request(uint32_t operation) const {
   XpDisplayRequest r{};
@@ -156,11 +221,11 @@ uint32_t RustPanelDriver::invoke(EpdBus* bus, XpDisplayRequest r) const {
   BusContext ctx{bus, {}};
   const auto table = busTable(ctx);
   uint32_t result = 0;
-  xp_display_execute(state_, &table, &r, &result);
+  xp_display_execute(storage_, &table, &r, &result);
   return result;
 }
 GrayscaleCapabilities RustPanelDriver::grayscaleCapabilities(GrayscaleMode mode) const {
-  const auto caps = initialized_ ? xp_display_capabilities(state_, static_cast<uint32_t>(mode)) : 0;
+  const auto caps = initialized_ ? xp_display_capabilities(storage_, static_cast<uint32_t>(mode)) : 0;
   return {caps & XP_DISPLAY_CAP_ABSOLUTE  ? GrayscaleEncoding::AbsolutePlanes
           : caps & XP_DISPLAY_CAP_OVERLAY ? GrayscaleEncoding::OverlayMasks
                                           : GrayscaleEncoding::Unsupported,
@@ -169,7 +234,7 @@ GrayscaleCapabilities RustPanelDriver::grayscaleCapabilities(GrayscaleMode mode)
           bool(caps & XP_DISPLAY_CAP_BUSY_STAGING)};
 }
 bool RustPanelDriver::supportsAsyncDisplay() const {
-  return initialized_ && (xp_display_capabilities(state_, 0) & XP_DISPLAY_CAP_ASYNC_DISPLAY);
+  return initialized_ && (xp_display_capabilities(storage_, 0) & XP_DISPLAY_CAP_ASYNC_DISPLAY);
 }
 bool RustPanelDriver::postRefreshAborted() const {
   return invoke(nullptr, request(XP_DISPLAY_OP_QUERY)) & XP_DISPLAY_RESULT_ABORTED;
@@ -327,6 +392,10 @@ void RustPanelDriver::beginDisplayWork() {
   invoke(nullptr, r);
 }
 void RustPanelDriver::abortPostRefresh() {
+  if (controller_ == XP_DISPLAY_PAPER_MONO) {
+    if (initialized_) xp_display_abort(storage_);
+    return;
+  }
   auto r = request(XP_DISPLAY_OP_ABORT_POST);
 
   invoke(nullptr, r);

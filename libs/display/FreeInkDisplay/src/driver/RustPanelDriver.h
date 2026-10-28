@@ -7,9 +7,11 @@ namespace freeink {
 class RustPanelDriver : public PanelDriver {
  public:
   explicit RustPanelDriver(uint32_t controller);
+  RustPanelDriver(uint32_t controller, void* storage, uint32_t storageSize, uint32_t variant, const void* config,
+                  uint32_t configSize);
   ~RustPanelDriver() override;
   uint32_t spiHz() const override;
-  BusyPolarity busyPolarity() const override { return BusyPolarity::X3TwoPhase; }
+  BusyPolarity busyPolarity() const override;
   PanelGeometry geometry() const override { return geometry_; }
   GrayscaleCapabilities grayscaleCapabilities(GrayscaleMode mode = GrayscaleMode::Overlay) const override;
   bool supportsAsyncDisplay() const override;
@@ -49,10 +51,15 @@ class RustPanelDriver : public PanelDriver {
   void setHoldPeriodicFull(bool hold) override;
   void setCustomLut(EpdBus& bus, bool enabled, const unsigned char* lut) override;
 
+ protected:
+  void controllerExtra(uint32_t operation, const void* payload, uint32_t size);
+
  private:
   XpDisplayRequest request(uint32_t operation) const;
   uint32_t invoke(EpdBus* bus, XpDisplayRequest request) const;
   alignas(XP_DISPLAY_STATE_ALIGN) mutable uint8_t state_[XP_DISPLAY_STATE_BYTES]{};
+  void* storage_ = nullptr;
+  uint32_t controller_ = 0;
   PanelGeometry geometry_{};
   bool initialized_ = false;
 };
