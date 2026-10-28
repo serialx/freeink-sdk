@@ -17,9 +17,12 @@
 #include <cstring>
 #include <vector>
 
+#if !defined(FREEINK_RUST_PANEL) || !FREEINK_RUST_PANEL || defined(FREEINK_SSD1677_CONFIG) || defined(SSD1677_PROBE_DEBUG)
 #include "../lut/Ssd1677Luts.h"
+#endif
 
 namespace freeink {
+#if !defined(FREEINK_RUST_PANEL) || !FREEINK_RUST_PANEL || defined(FREEINK_SSD1677_CONFIG) || defined(SSD1677_PROBE_DEBUG)
 namespace {
 
 // SSD1677 command set.
@@ -131,6 +134,8 @@ static const Ssd1677Config& ssd1677MetalioConfig() {
       lut_factory_quality_metalio, lut_fast_metalio};
   return cfg;
 }
+#endif
+
 #endif
 
 #if FREEINK_DEVICE_PICCO || FREEINK_DEVICE_STICKY
@@ -248,6 +253,7 @@ static uint8_t piccoClassify(const uint8_t id[10]) {
   return PiccoUnknown;
 }
 
+#if !defined(FREEINK_RUST_PANEL) || !FREEINK_RUST_PANEL || defined(FREEINK_SSD1677_CONFIG) || defined(SSD1677_PROBE_DEBUG)
 static Ssd1677Config piccoConfig(uint8_t border, const unsigned char* fast, const unsigned char* full) {
   Ssd1677Config c = {{0xAE, 0xC7, 0xC3, 0xC0, 0x80}, DRIVER_OUTPUT_SCAN, border, 0x5A, lut_grayscale_sticky,
                      0xF7, 0xDC, 0xD7};
@@ -265,6 +271,8 @@ static Ssd1677Config piccoConfig(uint8_t border, const unsigned char* fast, cons
   c.halfLut = full;  // DEPG0397 slot 0 (FULL) and slot 3 (HALF) are the same table
   return c;
 }
+
+#endif
 
 uint8_t piccoProbePanel() {
   static bool probed = false;
@@ -290,6 +298,7 @@ uint8_t piccoProbePanel() {
   return panel;
 }
 
+#if !defined(FREEINK_RUST_PANEL) || !FREEINK_RUST_PANEL || defined(FREEINK_SSD1677_CONFIG) || defined(SSD1677_PROBE_DEBUG)
 static const Ssd1677Config& ssd1677PiccoConfig() {
   static const Ssd1677Config yrd = piccoConfig(0x01, lut_picco_fast, nullptr);
   static const Ssd1677Config depg = piccoConfig(0x01, lut_picco_depg_fast, lut_picco_depg_full);
@@ -303,7 +312,9 @@ static const Ssd1677Config& ssd1677PiccoConfig() {
   }
 }
 #endif
+#endif
 
+#if !defined(FREEINK_RUST_PANEL) || !FREEINK_RUST_PANEL || defined(FREEINK_SSD1677_CONFIG) || defined(SSD1677_PROBE_DEBUG)
 // ── Reusable per-board waveform shortcuts ────────────────────────────────────
 // Opt-in optimizations a board can layer onto a base Ssd1677Config when its
 // specific panel is known to tolerate them. Each is a pure copy-and-tweak so a
@@ -1015,5 +1026,7 @@ PanelDriver& ssd1677Driver() {
   static Ssd1677Driver instance(ssd1677ActiveConfig());
   return instance;
 }
+
+#endif
 
 }  // namespace freeink

@@ -9,7 +9,7 @@ class RustPanelDriver : public PanelDriver {
   explicit RustPanelDriver(uint32_t controller);
   ~RustPanelDriver() override;
   uint32_t spiHz() const override;
-  BusyPolarity busyPolarity() const override { return BusyPolarity::X3TwoPhase; }
+  BusyPolarity busyPolarity() const override { return busyPolarity_; }
   PanelGeometry geometry() const override { return geometry_; }
   GrayscaleCapabilities grayscaleCapabilities(GrayscaleMode mode = GrayscaleMode::Overlay) const override;
   bool supportsAsyncDisplay() const override;
@@ -55,7 +55,11 @@ class RustPanelDriver : public PanelDriver {
   alignas(XP_DISPLAY_STATE_ALIGN) mutable uint8_t state_[XP_DISPLAY_STATE_BYTES]{};
   PanelGeometry geometry_{};
   bool initialized_ = false;
+  BusyPolarity busyPolarity_ = BusyPolarity::X3TwoPhase;
+  uint32_t defaultSpiHz_ = 16000000;
+  uint16_t lutBytes_ = 0;
 };
 PanelDriver& rustUc8253X3Driver();
+PanelDriver& rustSsd1677Driver();
 }  // namespace freeink
 #endif

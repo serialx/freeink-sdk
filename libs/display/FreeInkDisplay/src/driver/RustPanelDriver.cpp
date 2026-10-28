@@ -2,9 +2,13 @@
 #if defined(FREEINK_RUST_PANEL) && FREEINK_RUST_PANEL
 #include <BoardConfig.h>
 #include <esp_heap_caps.h>
+#if __has_include(<esp_rom_sys.h>)
+#include <esp_rom_sys.h>
+#endif
 
 #include <cstdlib>
 
+#include "Ssd1677Driver.h"
 #include "Uc8253X3Driver.h"
 extern "C" uint32_t xp_display_platform_increment(uint32_t* value) {
   return __atomic_add_fetch(value, 1u, __ATOMIC_ACQ_REL);
@@ -46,6 +50,8 @@ const XpDisplayPlatform platform{XP_DISPLAY_PLATFORM_VERSION, sizeof(XpDisplayPl
                                        return heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
                                      case XP_DISPLAY_ALLOC_PSRAM_ONLY:
                                        return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                                     case XP_DISPLAY_ALLOC_DEFAULT:
+                                       return std::malloc(size);
                                      default:
                                        return nullptr;
                                    }
@@ -70,6 +76,20 @@ const char* waitTag(uint32_t tag) {
       return " X3_BW_TARGET_DRF";
     case XP_DISPLAY_TAG_X3_POWER_DOWN:
       return " X3 power-down";
+    case XP_DISPLAY_TAG_SSD_SOFT_RESET:
+      return " CMD_SOFT_RESET";
+    case XP_DISPLAY_TAG_SSD_AUTO_BW:
+      return " CMD_AUTO_WRITE_BW_RAM";
+    case XP_DISPLAY_TAG_SSD_AUTO_RED:
+      return " CMD_AUTO_WRITE_RED_RAM";
+    case XP_DISPLAY_TAG_SSD_REFRESH:
+      return "refresh";
+    case XP_DISPLAY_TAG_SSD_GRAY_POWER_ON:
+      return "gray power-on";
+    case XP_DISPLAY_TAG_SSD_POWER_DOWN:
+      return " display power-down";
+    case XP_DISPLAY_TAG_SSD_FACTORY_GRAY:
+      return "factory_gray";
     default:
       return nullptr;
   }
@@ -98,7 +118,15 @@ XpDisplayBus busTable(BusContext& ctx) {
           [](void*, uint32_t us) { delayMicroseconds(us); },
           [](void*) -> uint32_t { return millis(); },
           [](void*, uint32_t, uint32_t) -> uint32_t { return 0; },
-          nullptr};
+          [](void*, uint32_t event, uint32_t bytes, uint32_t, uint32_t, uint32_t, const uint8_t*, uint32_t) {
+            if (event == XP_DISPLAY_DIAG_SSD_WINDOW_ALLOCATION) {
+#if __has_include(<esp_rom_sys.h>)
+              esp_rom_printf("[SSD1677] Window allocation failed: %u bytes\n", static_cast<unsigned>(bytes));
+#else
+              Serial.printf("[SSD1677] Window allocation failed: %u bytes\n", static_cast<unsigned>(bytes));
+#endif
+            }
+          }};
 }
 }  // namespace
 RustPanelDriver::RustPanelDriver(uint32_t controller) {
@@ -131,9 +159,50 @@ RustPanelDriver::RustPanelDriver(uint32_t controller) {
     raw.lut_len = source.lutLen;
     return raw;
   }();
-  config.controller_config = &custom;
-  config.controller_config_size = sizeof(custom);
+  if (controller == XP_DISPLAY_UC8253_X3) {
+    config.controller_config = &custom;
+    config.controller_config_size = sizeof(custom);
+  }
 #endif
+  if (controller == XP_DISPLAY_SSD1677) {
+    busyPolarity_ = BusyPolarity::ActiveHigh;
+    defaultSpiHz_ = 20000000;
+    lutBytes_ = 110;
+    if (board.orientation.mirrorX) config.flags |= XP_DISPLAY_SSD1677_MIRROR_X;
+    if (board.orientation.mirrorY) config.flags |= XP_DISPLAY_SSD1677_MIRROR_Y;
+#if defined(FREEINK_DISPLAY_FLIPPED) || defined(FLIPPED)
+    config.flags |= XP_DISPLAY_SSD1677_MIRROR_Y;
+#endif
+    switch (board.board) {
+      case BoardConfig::Board::Sticky:
+      case BoardConfig::Board::WsEpaper397:
+        config.variant = XP_DISPLAY_SSD1677_STICKY;
+        break;
+#if FREEINK_DEVICE_METALIO_EINK4
+      case BoardConfig::Board::MetalioEInk4:
+        config.variant = XP_DISPLAY_SSD1677_METALIO;
+        break;
+#endif
+#if FREEINK_DEVICE_PICCO
+      case BoardConfig::Board::Picco:
+        switch (piccoProbePanel()) {
+          case PiccoYrd0426: config.variant = XP_DISPLAY_SSD1677_PICCO_YRD; break;
+          case PiccoDepg0397: config.variant = XP_DISPLAY_SSD1677_PICCO_DEPG; break;
+          case PiccoOpm040b3: config.variant = XP_DISPLAY_SSD1677_PICCO_OPM; break;
+          default: config.variant = XP_DISPLAY_SSD1677_STICKY; break;
+        }
+        break;
+#endif
+      default:
+        break;
+    }
+#ifdef FREEINK_X4_FAST_DU_SHORTCUT
+    if (board.board == BoardConfig::Board::XteinkX4) config.flags |= XP_DISPLAY_SSD1677_FAST_DU;
+#endif
+#ifdef FREEINK_X4PRO_FAST_DU_SHORTCUT
+    if (board.board == BoardConfig::Board::XteinkX4Pro) config.flags |= XP_DISPLAY_SSD1677_FAST_DU;
+#endif
+  }
   const XpDisplayInitOptions options{XP_DISPLAY_INIT_OPTIONS_VERSION, sizeof(XpDisplayInitOptions), 1, &platform};
   initialized_ = xp_display_init_v2(state_, sizeof(state_), &config, &options) == XP_DISPLAY_OK;
 }
@@ -141,7 +210,7 @@ RustPanelDriver::~RustPanelDriver() {
   if (initialized_) xp_display_drop(state_);
 }
 uint32_t RustPanelDriver::spiHz() const {
-  return BoardConfig::ACTIVE.displaySpiHz != 0 ? BoardConfig::ACTIVE.displaySpiHz : 16000000;
+  return BoardConfig::ACTIVE.displaySpiHz != 0 ? BoardConfig::ACTIVE.displaySpiHz : defaultSpiHz_;
 }
 XpDisplayRequest RustPanelDriver::request(uint32_t operation) const {
   XpDisplayRequest r{};
@@ -283,6 +352,7 @@ void RustPanelDriver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, 
   auto r = request(XP_DISPLAY_OP_GRAY_DISPLAY);
   r.data = fb;
   r.lut = lut;
+  r.lut_len = lut ? lutBytes_ : 0;
   r.flags = (turnOff ? XP_DISPLAY_FLAG_TURN_OFF : 0) | (factoryMode ? XP_DISPLAY_FLAG_FACTORY : 0);
   invoke(&bus, r);
 }
@@ -365,7 +435,12 @@ void RustPanelDriver::setCustomLut(EpdBus& bus, bool enabled, const unsigned cha
   auto r = request(XP_DISPLAY_OP_CUSTOM_LUT);
   r.arg = enabled;
   r.lut = lut;
+  r.lut_len = lut ? lutBytes_ : 0;
   invoke(&bus, r);
+}
+PanelDriver& rustSsd1677Driver() {
+  static RustPanelDriver instance(XP_DISPLAY_SSD1677);
+  return instance;
 }
 PanelDriver& rustUc8253X3Driver() {
   static RustPanelDriver instance(XP_DISPLAY_UC8253_X3);
