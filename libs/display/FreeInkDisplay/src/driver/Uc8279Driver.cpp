@@ -1,3 +1,4 @@
+#if !defined(FREEINK_RUST_PANEL) || !FREEINK_RUST_PANEL
 #include "Uc8279Driver.h"
 
 
@@ -479,3 +480,5 @@ PanelDriver& uc8279Driver() {
 }
 
 }  // namespace freeink
+
+#endif

@@ -10,6 +10,8 @@ extern "C" uint32_t xp_display_platform_increment(uint32_t* value) {
   return __atomic_add_fetch(value, 1u, __ATOMIC_ACQ_REL);
 }
 
+#include "Uc8179Driver.h"
+#include "Uc8279X4Driver.h"
 namespace freeink {
 const Uc8253X3Config& uc8253X3DefaultConfig() {
   static const uint8_t* direct[5];
@@ -33,6 +35,27 @@ const Uc8253X3Config& uc8253X3DefaultConfig() {
 const Uc8253X3Config& FREEINK_UC8253_X3_CONFIG();
 #endif
 
+const Uc8179Config& uc8179DefaultConfig() {
+  static const Uc8179Config config{0x3f, 0x0a, 0x20, {0x25, 0x25, 0x3c, 0x25}, 2, 2, 0x1e, 0x5a, 0x29, 0xa9, 600, 0x22};
+  return config;
+}
+const Uc8279X4Config& uc8279X4DefaultConfig() {
+  static const Uc8279X4Config config{0x37, 0x4d, 0x20, 0x0e, 2, 2, 0x1e, 0x5a, 0x97, 0x97, 0xd7, 600, 120};
+  return config;
+}
+#ifdef FREEINK_UC8179_CONFIG
+const Uc8179Config& FREEINK_UC8179_CONFIG();
+#endif
+#ifdef FREEINK_UC8279_X4_CONFIG
+const Uc8279X4Config& FREEINK_UC8279_X4_CONFIG();
+#endif
+#ifndef FREEINK_UC8279X4_ROWREV
+#define FREEINK_UC8279X4_ROWREV 0
+#endif
+#ifndef FREEINK_UC8279X4_XMIRROR
+#define FREEINK_UC8279X4_XMIRROR 0
+#endif
+
 namespace {
 // Controllers own returned blocks and release them through this same table.
 const XpDisplayPlatform platform{XP_DISPLAY_PLATFORM_VERSION, sizeof(XpDisplayPlatform), nullptr,
@@ -42,6 +65,8 @@ const XpDisplayPlatform platform{XP_DISPLAY_PLATFORM_VERSION, sizeof(XpDisplayPl
                                        void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
                                        return p ? p : heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
                                      }
+                                     case XP_DISPLAY_ALLOC_DEFAULT:
+                                       return std::malloc(size);
                                      case XP_DISPLAY_ALLOC_INTERNAL:
                                        return heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
                                      case XP_DISPLAY_ALLOC_PSRAM_ONLY:
@@ -51,6 +76,65 @@ const XpDisplayPlatform platform{XP_DISPLAY_PLATFORM_VERSION, sizeof(XpDisplayPl
                                    }
                                  },
                                  [](void*, void* p) { std::free(p); }};
+const XpDisplayUltraChipConfig& ultraConfig(uint32_t controller) {
+  static const XpDisplayUltraChipConfig c8179 = [] {
+#ifdef FREEINK_UC8179_CONFIG
+    const auto& c = FREEINK_UC8179_CONFIG();
+#else
+    const auto& c = uc8179DefaultConfig();
+#endif
+    XpDisplayUltraChipConfig raw{c.psr0,
+                                 c.psr1,
+                                 c.pfs,
+                                 0,
+                                 {c.btst[0], c.btst[1], c.btst[2], c.btst[3]},
+                                 c.gateScan,
+                                 c.ccset,
+                                 c.tsset,
+                                 c.tssetFast,
+                                 c.cdiActive,
+                                 c.cdiIdle,
+                                 c.cdiActive,
+                                 c.powerSave,
+                                 c.tresHeight,
+                                 0,
+                                 0,
+                                 0,
+                                 1,
+                                 0};
+#ifdef BOARD_HAS_PSRAM
+    raw.psram = 1;
+#endif
+    return raw;
+  }();
+  static const XpDisplayUltraChipConfig c8279 = [] {
+#ifdef FREEINK_UC8279_X4_CONFIG
+    const auto& c = FREEINK_UC8279_X4_CONFIG();
+#else
+    const auto& c = uc8279X4DefaultConfig();
+#endif
+    return XpDisplayUltraChipConfig{c.psr0,
+                                    c.psr1,
+                                    c.pfs,
+                                    c.pll,
+                                    {0, 0, 0, 0},
+                                    c.gateScan,
+                                    c.ccset,
+                                    c.tsset,
+                                    c.tssetFast,
+                                    c.cdiAa,
+                                    c.cdiBwFull,
+                                    c.cdiBwFast,
+                                    0,
+                                    c.tresHeight,
+                                    c.gateOffset,
+                                    0,
+                                    static_cast<uint8_t>(BoardConfig::isX4Classic()),
+                                    FREEINK_UC8279X4_ROWREV,
+                                    FREEINK_UC8279X4_XMIRROR};
+  }();
+  return controller == XP_DISPLAY_UC8179 ? c8179 : c8279;
+}
 struct BusContext {
   EpdBus* bus;
   EpdBus::Transaction transaction;
@@ -70,6 +154,106 @@ const char* waitTag(uint32_t tag) {
       return " X3_BW_TARGET_DRF";
     case XP_DISPLAY_TAG_X3_POWER_DOWN:
       return " X3 power-down";
+    case XP_DISPLAY_TAG_UC8279_X3_PON:
+      return " 8279_PON";
+    case XP_DISPLAY_TAG_UC8279_X3_POF:
+      return " 8279_POF";
+    case XP_DISPLAY_TAG_UC8279_X3_DRF:
+      return " 8279_DRF";
+    case XP_DISPLAY_TAG_UC8279_X3_GRAY_PON:
+      return " 8279_gray_PON";
+    case XP_DISPLAY_TAG_UC8279_X3_GRAY_DRF:
+      return " 8279_gray_DRF";
+    case XP_DISPLAY_TAG_UC8279_X3_DIRECT_GRAY_DRF:
+      return " 8279_DIRECT_GRAY_DRF";
+    case XP_DISPLAY_TAG_UC8279_X3_GRAY_POF:
+      return " 8279_gray_POF";
+    case XP_DISPLAY_TAG_UC8279_X3_BW_TARGET_DRF:
+      return " 8279_BW_TARGET_DRF";
+    case XP_DISPLAY_TAG_UC8279_X3_POWER_DOWN:
+      return " 8279 power-down";
+    case XP_DISPLAY_TAG_UC8279_X4_PON:
+      return " 8279x4_PON";
+    case XP_DISPLAY_TAG_UC8279_X4_POF:
+      return " 8279x4_POF";
+    case XP_DISPLAY_TAG_UC8279_X4_DRF:
+      return " 8279x4_DRF";
+    case XP_DISPLAY_TAG_UC8279_X4_BW_TARGET_DRF:
+      return " 8279x4_BW_TARGET_DRF";
+    case XP_DISPLAY_TAG_UC8279_X4_POWER_DOWN:
+      return " 8279x4 power-down";
+    case XP_DISPLAY_TAG_ABSOLUTE_PLANE:
+      return " absolute plane";
+    case XP_DISPLAY_TAG_UC8279_X4_GRAY_PON:
+      return " 8279x4_gray_PON";
+    case XP_DISPLAY_TAG_UC8279_X4_GRAY:
+      return " 8279x4_gray";
+    case XP_DISPLAY_TAG_UC8279_X4_DIRECT_GRAY_DRF:
+      return " 8279x4_DIRECT_GRAY_DRF";
+    case XP_DISPLAY_TAG_UC8279_X4_GRAY_POF:
+      return " 8279x4_gray_POF";
+    case XP_DISPLAY_TAG_UC8279_X4_GRAY_BASE_READY:
+      return " 8279x4_gray_base_ready";
+    case XP_DISPLAY_TAG_UC8279_X4_GRAY_BASE_POF:
+      return " 8279x4_gray_base_POF";
+    case XP_DISPLAY_TAG_UC8279_X4_GRAY_PRE_READY:
+      return " 8279x4_gray_pre_ready";
+    case XP_DISPLAY_TAG_UC8279_X4_GRAY_PRE_PON:
+      return " 8279x4_gray_pre_PON";
+    case XP_DISPLAY_TAG_UC8279_X4_GRAY_PRE_DRF:
+      return " 8279x4_gray_pre_DRF";
+    case XP_DISPLAY_TAG_A4_POWER_ON:
+      return " A4 power-on";
+    case XP_DISPLAY_TAG_A4_REFRESH:
+      return " A4 refresh";
+    case XP_DISPLAY_TAG_A4_POWER_OFF:
+      return " A4 power-off";
+    case XP_DISPLAY_TAG_UC8179_PON:
+      return " 8179_PON";
+    case XP_DISPLAY_TAG_UC8179_POF:
+      return " 8179_POF";
+    case XP_DISPLAY_TAG_UC8179_DRF:
+      return " 8179_DRF";
+    case XP_DISPLAY_TAG_UC8179_BW_TARGET_DRF:
+      return " 8179_BW_TARGET_DRF";
+    case XP_DISPLAY_TAG_UC8179_POWER_DOWN:
+      return " 8179 power-down";
+    case XP_DISPLAY_TAG_UC8179_DIRECT_SETUP_POF:
+      return " 8179_direct_setup_POF";
+    case XP_DISPLAY_TAG_UC8179_DIRECT_EXIT_POF:
+      return " 8179_direct_exit_POF";
+    case XP_DISPLAY_TAG_UC8179_GRAY_BASE_READY:
+      return " 8179_gray_base_ready";
+    case XP_DISPLAY_TAG_UC8179_GRAY_BASE_POF:
+      return " 8179_gray_base_POF";
+    case XP_DISPLAY_TAG_UC8179_GRAY_PRE_READY:
+      return " 8179_gray_pre_ready";
+    case XP_DISPLAY_TAG_UC8179_GRAY_PRE_PON:
+      return " 8179_gray_pre_PON";
+    case XP_DISPLAY_TAG_UC8179_GRAY_PRE_DRF:
+      return " 8179_gray_pre_DRF";
+    case XP_DISPLAY_TAG_UC8179_GRAY_LSB:
+      return " 8179_gray_lsb";
+    case XP_DISPLAY_TAG_UC8179_GRAY_MSB:
+      return " 8179_gray_msb";
+    case XP_DISPLAY_TAG_UC8179_DIRECT_READY:
+      return " 8179_direct_ready";
+    case XP_DISPLAY_TAG_UC8179_DIRECT_PON:
+      return " 8179_direct_PON";
+    case XP_DISPLAY_TAG_UC8179_DIRECT_GRAY_DRF:
+      return " 8179_DIRECT_GRAY_DRF";
+    case XP_DISPLAY_TAG_UC8179_DIRECT_POF:
+      return " 8179_direct_POF";
+    case XP_DISPLAY_TAG_UC8179_GRAY_READY:
+      return " 8179_gray_ready";
+    case XP_DISPLAY_TAG_UC8179_GRAY_PON:
+      return " 8179_gray_PON";
+    case XP_DISPLAY_TAG_UC8179_GRAY_SPLIT_DRF:
+      return " 8179_gray_split_DRF";
+    case XP_DISPLAY_TAG_UC8179_ABSOLUTE_POF:
+      return " 8179_absolute_POF";
+    case XP_DISPLAY_TAG_UC8179_GRAY_CLEANUP:
+      return " 8179_gray_cleanup";
     default:
       return nullptr;
   }
@@ -101,7 +285,7 @@ XpDisplayBus busTable(BusContext& ctx) {
           nullptr};
 }
 }  // namespace
-RustPanelDriver::RustPanelDriver(uint32_t controller) {
+RustPanelDriver::RustPanelDriver(uint32_t controller) : controller_(controller) {
   const auto& board = BoardConfig::ACTIVE;
   geometry_ = {board.displayWidth, board.displayHeight, static_cast<uint16_t>(board.displayWidth / 8),
                static_cast<uint32_t>(board.displayWidth / 8) * board.displayHeight};
@@ -131,9 +315,17 @@ RustPanelDriver::RustPanelDriver(uint32_t controller) {
     raw.lut_len = source.lutLen;
     return raw;
   }();
-  config.controller_config = &custom;
-  config.controller_config_size = sizeof(custom);
+  if (controller == XP_DISPLAY_UC8253_X3) {
+    config.controller_config = &custom;
+    config.controller_config_size = sizeof(custom);
+  }
 #endif
+  const bool ultra = controller == XP_DISPLAY_UC8179 || controller == XP_DISPLAY_UC8279_X4;
+  if (ultra) {
+    config.variant = board.displayControllerVariant;
+    config.controller_config = &ultraConfig(controller);
+    config.controller_config_size = sizeof(XpDisplayUltraChipConfig);
+  }
   const XpDisplayInitOptions options{XP_DISPLAY_INIT_OPTIONS_VERSION, sizeof(XpDisplayInitOptions), 1, &platform};
   initialized_ = xp_display_init_v2(state_, sizeof(state_), &config, &options) == XP_DISPLAY_OK;
 }
@@ -141,7 +333,20 @@ RustPanelDriver::~RustPanelDriver() {
   if (initialized_) xp_display_drop(state_);
 }
 uint32_t RustPanelDriver::spiHz() const {
-  return BoardConfig::ACTIVE.displaySpiHz != 0 ? BoardConfig::ACTIVE.displaySpiHz : 16000000;
+  return BoardConfig::ACTIVE.displaySpiHz != 0  ? BoardConfig::ACTIVE.displaySpiHz
+         : controller_ == XP_DISPLAY_UC8279C_A4 ? 20000000
+                                                : 16000000;
+}
+BusyPolarity RustPanelDriver::busyPolarity() const {
+  switch (controller_) {
+    case XP_DISPLAY_UC8179:
+    case XP_DISPLAY_UC8279_X4:
+      return BusyPolarity::UcIdleHigh;
+    case XP_DISPLAY_UC8279C_A4:
+      return BusyPolarity::ActiveLow;
+    default:
+      return BusyPolarity::X3TwoPhase;
+  }
 }
 XpDisplayRequest RustPanelDriver::request(uint32_t operation) const {
   XpDisplayRequest r{};
@@ -369,6 +574,22 @@ void RustPanelDriver::setCustomLut(EpdBus& bus, bool enabled, const unsigned cha
 }
 PanelDriver& rustUc8253X3Driver() {
   static RustPanelDriver instance(XP_DISPLAY_UC8253_X3);
+  return instance;
+}
+PanelDriver& uc8179Driver() {
+  static RustPanelDriver instance(XP_DISPLAY_UC8179);
+  return instance;
+}
+PanelDriver& uc8279Driver() {
+  static RustPanelDriver instance(XP_DISPLAY_UC8279_X3);
+  return instance;
+}
+PanelDriver& uc8279X4Driver() {
+  static RustPanelDriver instance(XP_DISPLAY_UC8279_X4);
+  return instance;
+}
+PanelDriver& uc8279cA4Driver() {
+  static RustPanelDriver instance(XP_DISPLAY_UC8279C_A4);
   return instance;
 }
 }  // namespace freeink

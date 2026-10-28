@@ -9,7 +9,7 @@ class RustPanelDriver : public PanelDriver {
   explicit RustPanelDriver(uint32_t controller);
   ~RustPanelDriver() override;
   uint32_t spiHz() const override;
-  BusyPolarity busyPolarity() const override { return BusyPolarity::X3TwoPhase; }
+  BusyPolarity busyPolarity() const override;
   PanelGeometry geometry() const override { return geometry_; }
   GrayscaleCapabilities grayscaleCapabilities(GrayscaleMode mode = GrayscaleMode::Overlay) const override;
   bool supportsAsyncDisplay() const override;
@@ -54,6 +54,7 @@ class RustPanelDriver : public PanelDriver {
   uint32_t invoke(EpdBus* bus, XpDisplayRequest request) const;
   alignas(XP_DISPLAY_STATE_ALIGN) mutable uint8_t state_[XP_DISPLAY_STATE_BYTES]{};
   PanelGeometry geometry_{};
+  uint32_t controller_ = 0;
   bool initialized_ = false;
 };
 PanelDriver& rustUc8253X3Driver();
