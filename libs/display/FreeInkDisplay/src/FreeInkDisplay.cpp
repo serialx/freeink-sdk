@@ -31,7 +31,11 @@
 #include "driver/Ssd2677Driver.h"
 #endif
 #if FREEINK_DRIVER_UC8253_X3
+#if defined(FREEINK_RUST_PANEL) && FREEINK_RUST_PANEL
+#include "driver/RustPanelDriver.h"
+#else
 #include "driver/Uc8253X3Driver.h"
+#endif
 #endif
 #if FREEINK_DRIVER_UC8279
 #include "driver/Uc8279Driver.h"
@@ -186,7 +190,11 @@ void FreeInkDisplay::selectDriver() {
       }
 #endif
 #if FREEINK_DRIVER_UC8253_X3
+#if defined(FREEINK_RUST_PANEL) && FREEINK_RUST_PANEL
+      _driver = &rustUc8253X3Driver();
+#else
       _driver = &uc8253X3Driver();
+#endif
 #endif
       break;
 #endif
@@ -239,7 +247,11 @@ void FreeInkDisplay::selectDriver() {
 #elif FREEINK_DRIVER_ED2208
       _driver = &ed2208M5Driver();
 #elif FREEINK_DRIVER_UC8253_X3
+#if defined(FREEINK_RUST_PANEL) && FREEINK_RUST_PANEL
+      _driver = &rustUc8253X3Driver();
+#else
       _driver = &uc8253X3Driver();
+#endif
 #elif FREEINK_DRIVER_LGFX_EPD
       _driver = &lgfxEpdDriver();
 #elif FREEINK_DRIVER_IT8951
@@ -931,8 +943,8 @@ void FreeInkDisplay::cancelGrayscalePass() {
 bool FreeInkDisplay::acceptGrayscaleRows(unsigned plane, const uint8_t* data, uint16_t y, uint16_t rows) {
   if (_grayscaleMode == GrayscaleMode::Overlay) return true;
   const auto h = getDisplayHeight();
-  if (_grayPassFailed || !data || !rows || (plane == 1 && _grayRows[0] == 0) ||
-      y != _grayRows[plane] || y >= h || rows > h - y) {
+  if (_grayPassFailed || !data || !rows || (plane == 1 && _grayRows[0] == 0) || y != _grayRows[plane] || y >= h ||
+      rows > h - y) {
     _grayPassFailed = true;
     return false;
   }
@@ -1011,9 +1023,7 @@ void FreeInkDisplay::writeGrayscalePlaneStrip(GrayPlane plane, const uint8_t* ro
                                     rows, yStart, numRows);
 }
 
-bool FreeInkDisplay::supportsBusyGrayscaleStaging() const {
-  return grayscaleCapabilities().stagingWhileBusy;
-}
+bool FreeInkDisplay::supportsBusyGrayscaleStaging() const { return grayscaleCapabilities().stagingWhileBusy; }
 
 void FreeInkDisplay::prepareGrayscaleTarget() {
   if (grayscaleCapabilities().stagingWhileBusy) {
@@ -1021,13 +1031,9 @@ void FreeInkDisplay::prepareGrayscaleTarget() {
   }
 }
 
-bool FreeInkDisplay::supportsStripGrayscale() const {
-  return grayscaleCapabilities().stripUploads;
-}
+bool FreeInkDisplay::supportsStripGrayscale() const { return grayscaleCapabilities().stripUploads; }
 
-bool FreeInkDisplay::combinesGrayscaleBase() const {
-  return grayscaleCapabilities().base == GrayscaleBase::Combined;
-}
+bool FreeInkDisplay::combinesGrayscaleBase() const { return grayscaleCapabilities().base == GrayscaleBase::Combined; }
 
 void FreeInkDisplay::cleanupGrayscaleBuffers(const uint8_t* bwBuffer) {
   cancelGrayscalePass();
