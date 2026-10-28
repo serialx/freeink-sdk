@@ -1,5 +1,5 @@
+#if !defined(FREEINK_RUST_PANEL) || !FREEINK_RUST_PANEL
 #include "Uc8253X3Driver.h"
-
 
 #include <BoardConfig.h>
 
@@ -38,9 +38,9 @@ constexpr uint8_t CMD_PARTIAL_OUT = 0x92;
 }  // namespace
 
 const Uc8253X3Config& uc8253X3DefaultConfig() {
-  static constexpr Uc8253LutBank directGray = {
-      kUltraChipDirectGray[0], kUltraChipDirectGray[4], kUltraChipDirectGray[2],
-      kUltraChipDirectGray[3], kUltraChipDirectGray[1]};
+  static constexpr Uc8253LutBank directGray = {kUltraChipDirectGray[0], kUltraChipDirectGray[4],
+                                               kUltraChipDirectGray[2], kUltraChipDirectGray[3],
+                                               kUltraChipDirectGray[1]};
   static const Uc8253X3Config cfg = {
       {lut_x3_vcom_normal, lut_x3_ww_normal, lut_x3_bw_normal, lut_x3_wb_normal, lut_x3_bb_normal},
       {lut_x3_vcom_half, lut_x3_ww_half, lut_x3_bw_half, lut_x3_wb_half, lut_x3_bb_half},
@@ -85,8 +85,7 @@ void Uc8253X3Driver::loadBankCdi(EpdBus& bus, uint8_t cdi0, uint8_t cdi1, const 
   loadBank(bus, bank);
 }
 
-void Uc8253X3Driver::triggerRefresh(EpdBus &bus, bool turnOff,
-                                    const char *label) {
+void Uc8253X3Driver::triggerRefresh(EpdBus& bus, bool turnOff, const char* label) {
   if (!_isScreenOn) {
     bus.cmd(CMD_POWER_ON);
     bus.waitBusy(" X3_PON");
@@ -101,13 +100,12 @@ void Uc8253X3Driver::triggerRefresh(EpdBus &bus, bool turnOff,
   }
 }
 
-void Uc8253X3Driver::grayWindowIn(EpdBus &bus) {
+void Uc8253X3Driver::grayWindowIn(EpdBus& bus) {
   const uint16_t xEnd = _w - 1;
   const uint16_t yEnd = _h - 1;
-  const uint8_t window[9] = {
-      0, 0, static_cast<uint8_t>(xEnd >> 8), static_cast<uint8_t>(xEnd),
-      0, 0, static_cast<uint8_t>(yEnd >> 8), static_cast<uint8_t>(yEnd),
-      1};
+  const uint8_t window[9] = {0, 0, static_cast<uint8_t>(xEnd >> 8), static_cast<uint8_t>(xEnd),
+                             0, 0, static_cast<uint8_t>(yEnd >> 8), static_cast<uint8_t>(yEnd),
+                             1};
   bus.cmd(CMD_PARTIAL_IN);
   bus.cmdData(CMD_PARTIAL_WINDOW, window, sizeof(window));
 }
@@ -280,8 +278,10 @@ void Uc8253X3Driver::displayFinish(EpdBus& bus, const uint8_t* fb) {
 
   uint8_t postConditionPasses = 0;
   if (doFullSync) {
-    if (_forceFullSyncNext) postConditionPasses = _forcedConditionPassesNext;
-    else if (_initialFullSyncsRemaining == 1) postConditionPasses = 1;
+    if (_forceFullSyncNext)
+      postConditionPasses = _forcedConditionPassesNext;
+    else if (_initialFullSyncsRemaining == 1)
+      postConditionPasses = 1;
   }
   if (postConditionPasses > 0) {
     const uint16_t xEnd = static_cast<uint16_t>(_w - 1);
@@ -327,7 +327,7 @@ void Uc8253X3Driver::displayFinish(EpdBus& bus, const uint8_t* fb) {
 }
 
 void Uc8253X3Driver::beginGrayscale(EpdBus& bus, const uint8_t* fb, GrayscaleMode mode, RefreshMode fallback,
-                                   bool turnOff) {
+                                    bool turnOff) {
   if (mode == GrayscaleMode::Direct && _cfg.directGray) {
     // Stage complete planes before the only display activation. No B/W image is
     // shown.
@@ -438,14 +438,13 @@ void Uc8253X3Driver::copyGrayscaleLsb(EpdBus& bus, const uint8_t* lsb) {
   _grayState.lsbValid = true;
 }
 
-void Uc8253X3Driver::copyGrayscaleMsb(EpdBus &bus, const uint8_t *msb) {
-  if (!msb || !_grayState.lsbValid)
-    return;
+void Uc8253X3Driver::copyGrayscaleMsb(EpdBus& bus, const uint8_t* msb) {
+  if (!msb || !_grayState.lsbValid) return;
   if (_directGrayPass) {
     writeGrayscalePlaneStrip(bus, GrayPlane::Msb, msb, 0, _h);
     return;
   }
-  bus.sendPlaneFlipped(CMD_DTM2, msb, _h, _wb); // MSB plane -> "new" RAM
+  bus.sendPlaneFlipped(CMD_DTM2, msb, _h, _wb);  // MSB plane -> "new" RAM
   bus.cmd(CMD_DATA_STOP);
 }
 
@@ -628,3 +627,5 @@ PanelDriver& uc8253X3Driver() {
 }
 
 }  // namespace freeink
+
+#endif

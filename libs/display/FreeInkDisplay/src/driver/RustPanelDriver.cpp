@@ -1,8 +1,52 @@
 #include "RustPanelDriver.h"
 #if defined(FREEINK_RUST_PANEL) && FREEINK_RUST_PANEL
 #include <BoardConfig.h>
+#include <esp_heap_caps.h>
+
+#include <cstdlib>
+
+#include "Uc8253X3Driver.h"
 namespace freeink {
+const Uc8253X3Config& uc8253X3DefaultConfig() {
+  static const uint8_t* direct[5];
+  static XpDisplayX3Config raw;
+  static const Uc8253X3Config config = [] {
+    xp_display_x3_default_config(&raw, direct);
+    const auto bank = [](const uint8_t* const* b) { return Uc8253LutBank{b[0], b[1], b[2], b[3], b[4]}; };
+    static const Uc8253LutBank directBank = bank(direct);
+    return Uc8253X3Config{bank(raw.banks[0]),
+                          bank(raw.banks[1]),
+                          bank(raw.banks[2]),
+                          bank(raw.banks[3]),
+                          bank(raw.banks[4]),
+                          bank(raw.banks[5]),
+                          42,
+                          &directBank};
+  }();
+  return config;
+}
+#ifdef FREEINK_UC8253_X3_CONFIG
+const Uc8253X3Config& FREEINK_UC8253_X3_CONFIG();
+#endif
+
 namespace {
+// Controllers own returned blocks and release them through this same table.
+const XpDisplayPlatform platform{XP_DISPLAY_PLATFORM_VERSION, sizeof(XpDisplayPlatform), nullptr,
+                                 [](void*, uint32_t size, uint32_t caps) -> void* {
+                                   switch (caps) {
+                                     case XP_DISPLAY_ALLOC_PSRAM_THEN_INTERNAL: {
+                                       void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                                       return p ? p : heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                                     }
+                                     case XP_DISPLAY_ALLOC_INTERNAL:
+                                       return heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                                     case XP_DISPLAY_ALLOC_PSRAM_ONLY:
+                                       return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                                     default:
+                                       return nullptr;
+                                   }
+                                 },
+                                 [](void*, void* p) { std::free(p); }};
 struct BusContext {
   EpdBus* bus;
   EpdBus::Transaction transaction;
@@ -59,7 +103,35 @@ RustPanelDriver::RustPanelDriver(uint32_t controller) {
                static_cast<uint32_t>(board.displayWidth / 8) * board.displayHeight};
   XpDisplayConfig config{
       XP_DISPLAY_ABI_VERSION, sizeof(XpDisplayConfig), controller, 0, geometry_.width, geometry_.height, 0, nullptr, 0};
-  initialized_ = xp_display_init(state_, sizeof(state_), &config) == XP_DISPLAY_OK;
+#ifdef FREEINK_UC8253_X3_CONFIG
+  static const uint8_t* direct[5];
+  static const XpDisplayX3Config custom = [] {
+    const auto& source = FREEINK_UC8253_X3_CONFIG();
+    XpDisplayX3Config raw{};
+    const Uc8253LutBank* banks[] = {&source.normal, &source.half, &source.fast,
+                                    &source.full,   &source.gc,   &source.preBwMid};
+    for (unsigned i = 0; i < 6; ++i) {
+      const auto& b = *banks[i];
+      const uint8_t* pointers[] = {b.vcom, b.ww, b.bw, b.wb, b.bb};
+      for (unsigned j = 0; j < 5; ++j) raw.banks[i][j] = pointers[j];
+    }
+    if (source.directGray) {
+      const auto& b = *source.directGray;
+      direct[0] = b.vcom;
+      direct[1] = b.ww;
+      direct[2] = b.bw;
+      direct[3] = b.wb;
+      direct[4] = b.bb;
+      raw.direct = direct;
+    }
+    raw.lut_len = source.lutLen;
+    return raw;
+  }();
+  config.controller_config = &custom;
+  config.controller_config_size = sizeof(custom);
+#endif
+  const XpDisplayInitOptions options{XP_DISPLAY_INIT_OPTIONS_VERSION, sizeof(XpDisplayInitOptions), 1, &platform};
+  initialized_ = xp_display_init_v2(state_, sizeof(state_), &config, &options) == XP_DISPLAY_OK;
 }
 RustPanelDriver::~RustPanelDriver() {
   if (initialized_) xp_display_drop(state_);
