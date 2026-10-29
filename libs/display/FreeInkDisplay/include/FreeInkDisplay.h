@@ -1,4 +1,10 @@
 #pragma once
+#if defined(XP_STRIP_RENDER) && XP_STRIP_RENDER
+#if !defined(FREEINK_RUST_PANEL) || !FREEINK_RUST_PANEL
+#error XP_STRIP_RENDER requires FREEINK_RUST_PANEL
+#endif
+#include <xp_display.h>
+#endif
 
 // FreeInk SDK — display facade.
 //
@@ -25,6 +31,13 @@ class PanelDriver;
 
 class FreeInkDisplay {
  public:
+#if defined(XP_STRIP_RENDER) && XP_STRIP_RENDER
+  // Borrow until cleared; registration/clear drains pending refresh work.
+  // Freeze the scene across replays. Fallible painters must retain a complete
+  // framebuffer fallback; callbacks may use SD only after the display releases CS.
+  bool setFrameSource(XpDisplaySource* source);
+#endif
+
   // Legacy pin arguments are retained for source compatibility. begin() uses
   // BoardConfig::ACTIVE.display, including any runtime-selected board profile.
   FreeInkDisplay(int8_t sclk, int8_t mosi, int8_t cs, int8_t dc, int8_t rst, int8_t busy);
