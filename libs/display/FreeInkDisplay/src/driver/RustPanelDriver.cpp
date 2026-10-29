@@ -541,6 +541,12 @@ uint32_t RustPanelDriver::invoke(EpdBus* bus, const XpDisplayRequest& r) const {
        r.operation == XP_DISPLAY_OP_DISPLAY_FINISH || r.operation == XP_DISPLAY_OP_GRAY_BASE ||
        (r.operation == XP_DISPLAY_OP_GRAY_BEGIN && r.mode == 0) || r.operation == XP_DISPLAY_OP_GRAY_CLEANUP)) {
     if (xp_display_execute_source(storage_, &table, &r, source_, &result) == XP_DISPLAY_OK) return result;
+    if (r.operation == XP_DISPLAY_OP_GRAY_CLEANUP) {
+      // Cleanup restores controller RAM without replacing the visible grayscale page.
+      Serial.printf("%s", "[EPD] Strip source failed; restoring buffered cleanup\n");
+      xp_display_execute(storage_, &table, &r, &result);
+      return result;
+    }
     // The retained framebuffer is the complete fallback for an interrupted source.
     Serial.printf("%s", "[EPD] Strip source failed; restoring buffered frame\n");
     XpDisplayRequest resync = request(XP_DISPLAY_OP_RESYNC);
@@ -796,7 +802,8 @@ bool freeink::RustPanelDriver::setFrameSource(XpDisplaySource* source) {
   if (controller_ != XP_DISPLAY_UC8253_X3 && controller_ != XP_DISPLAY_SSD1677) return false;
   if (source && (source->struct_size != sizeof(XpDisplaySource) || !source->scratch || !source->paint ||
                  source->width != width_ || source->rows == 0 ||
-                 static_cast<uint32_t>(width_ / 8) * source->rows > source->capacity)) return false;
+                 static_cast<uint32_t>(width_ / 8) * source->rows > source->capacity))
+    return false;
   source_ = source;
   return true;
 }
