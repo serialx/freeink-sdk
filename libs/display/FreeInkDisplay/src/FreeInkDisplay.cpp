@@ -1175,3 +1175,10 @@ void FreeInkDisplay::saveFrameBufferAsPBM(const char* filename) {
 }
 
 }  // namespace freeink
+
+#if defined(XP_STRIP_RENDER) && XP_STRIP_RENDER
+bool freeink::FreeInkDisplay::setFrameSource(XpDisplaySource* source) {
+  syncPendingAsync();
+  return _driver && _driver->setFrameSource(source);
+}
+#endif

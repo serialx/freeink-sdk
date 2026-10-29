@@ -6,6 +6,9 @@
 namespace freeink {
 class RustPanelDriver : public PanelDriver {
  public:
+#if defined(XP_STRIP_RENDER) && XP_STRIP_RENDER
+  bool setFrameSource(XpDisplaySource* source) override;
+#endif
   RustPanelDriver(uint32_t controller, void* storage, uint32_t storageSize, uint32_t variant, const void* config,
                   uint32_t configSize);
   ~RustPanelDriver() override;
@@ -54,6 +57,9 @@ class RustPanelDriver : public PanelDriver {
   void controllerExtra(uint32_t operation, const void* payload, uint32_t size);
 
  private:
+#if defined(XP_STRIP_RENDER) && XP_STRIP_RENDER
+  XpDisplaySource* source_ = nullptr;
+#endif
   XpDisplayRequest request(uint32_t operation) const;
   uint32_t invoke(EpdBus* bus, const XpDisplayRequest& request) const;
   uint32_t invoke(EpdBus* bus, uint32_t operation) const;
