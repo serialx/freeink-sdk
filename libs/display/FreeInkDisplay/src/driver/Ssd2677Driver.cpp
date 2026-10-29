@@ -2,7 +2,7 @@
 
 #include <BoardConfig.h>
 
-#if FREEINK_DEVICE_PICCO || FREEINK_DEVICE_STICKY
+#if FREEINK_DRIVER_SSD2677
 
 #include <cstring>
 

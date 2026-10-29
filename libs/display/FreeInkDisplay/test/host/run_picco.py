@@ -83,7 +83,7 @@ inline FakeSerial Serial;
     (root / "Arduino.h").write_text('#include "BoardConfig.h"\n' + arduino)
     exe = root / board.lower()
     subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-Wno-unused-parameter",
-                    "-Wno-unused-function", "-DARDUINO=1", f"-D{device_macro}=1", "-I" + str(root),
+                    "-Wno-unused-function", "-DARDUINO=1", f"-D{device_macro}=1", "-DFREEINK_DRIVER_SSD2677=1", "-I" + str(root),
                     str(HERE / test_cpp), str(root / "src/driver/Ssd1677Driver.cpp"),
                     str(root / "src/driver/Ssd2677Driver.cpp"), "-o", str(exe)],
                    check=True)
@@ -91,7 +91,7 @@ inline FakeSerial Serial;
     shutil.copy2(LIB / "src/FreeInkDisplay.cpp", root / "src/FreeInkDisplay.cpp")
     shutil.copy2(LIB / "include/FreeInkDisplay.h", root / "include/FreeInkDisplay.h")
     subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-fsyntax-only", "-DARDUINO=1",
-                    f"-D{device_macro}=1", "-DFREEINK_DRIVER_SSD1677=1", "-I" + str(root),
+                    f"-D{device_macro}=1", "-DFREEINK_DRIVER_SSD2677=1", "-DFREEINK_DRIVER_SSD1677=1", "-I" + str(root),
                     "-I" + str(root / "include"), str(root / "src/FreeInkDisplay.cpp")], check=True)
     return exe
 

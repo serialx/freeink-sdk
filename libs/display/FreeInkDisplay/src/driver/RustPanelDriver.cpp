@@ -309,7 +309,7 @@ const char* waitTag(uint32_t tag) {
     case XP_DISPLAY_TAG_UC8179_GRAY_CLEANUP:
       return " 8179_gray_cleanup";
 #endif
-#if FREEINK_DEVICE_STICKY || FREEINK_DEVICE_PICCO
+#if FREEINK_DRIVER_SSD2677
     case XP_DISPLAY_TAG_SSD2677_RESET:
       return " SSD2677 reset";
     case XP_DISPLAY_TAG_SSD2677_INIT:
@@ -354,7 +354,12 @@ XpDisplayBus busTable(BusContext& ctx) {
           [](void* p, uint32_t polarity, uint32_t tag) {
             context(p).bus->waitBusy(static_cast<BusyPolarity>(polarity), waitTag(tag));
           },
+#if FREEINK_DRIVER_UC8253_X3 || FREEINK_DRIVER_SSD1677 || FREEINK_DRIVER_UC8279 || FREEINK_DRIVER_UC8179 || \
+    FREEINK_DRIVER_UC8279_X4 || FREEINK_DRIVER_SSD2677 || FREEINK_DRIVER_PAPER_MONO
           [](void* p, uint32_t tag) { context(p).bus->waitRefreshComplete(waitTag(tag)); },
+#else
+          nullptr,
+#endif
           [](void*, uint32_t ms) { delay(ms); },
           [](void*, uint32_t us) { delayMicroseconds(us); },
           [](void*) -> uint32_t { return millis(); },
