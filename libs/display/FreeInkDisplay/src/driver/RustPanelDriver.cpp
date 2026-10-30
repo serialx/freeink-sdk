@@ -369,7 +369,7 @@ const char* waitTag(uint32_t tag) {
   }
 }
 XpDisplayBus busTable(BusContext& ctx) {
-  return {XP_DISPLAY_ABI_VERSION,
+  return {XP_DISPLAY_BUS_VERSION,
           sizeof(XpDisplayBus),
           &ctx,
           [](void* p, uint8_t v) { context(p).bus->cmd(v); },
@@ -436,6 +436,21 @@ XpDisplayBus busTable(BusContext& ctx) {
                 break;
             }
 #endif
+          },
+          [](void* p, uint8_t command, const uint8_t* data, uint32_t length, uint16_t stride, uint8_t direction,
+             uint8_t transform) -> uint32_t {
+            if (!data || !length || !stride || length % stride) return XP_DISPLAY_INVALID;
+            if (direction > XP_DISPLAY_ROWS_REVERSE || transform != XP_DISPLAY_BYTES_IDENTITY)
+              return XP_DISPLAY_UNSUPPORTED;
+            auto& bus = *context(p).bus;
+            bus.cmd(command);
+            auto transaction = bus.beginTxn();
+            const uint32_t rows = length / stride;
+            for (uint32_t row = 0; row < rows; ++row) {
+              const uint32_t index = direction == XP_DISPLAY_ROWS_REVERSE ? rows - 1 - row : row;
+              transaction.writeBytes(data + index * stride, stride);
+            }
+            return XP_DISPLAY_OK;
           }};
 }
 }  // namespace
