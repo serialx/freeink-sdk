@@ -802,6 +802,31 @@ lib_deps =
 shim. The display libs depend on `BoardConfig`; `SdFat` is pulled in
 automatically as a dependency of `SDCardManager`.
 
+## Rust panel linkage in this fork
+
+The eight CrossPoint panel policies (UC8253-X3, UC8279-X3, SSD1677, UC8179,
+UC8279-X4, UC8279C-A4, SSD2677 and Paper Mono) are implemented in the consumer's
+Rust display archive. Their SDK factories use `RustPanelDriver`; the bus, board
+selection, Sticky/Picco probes and Paper Mono controls remain in this SDK.
+Consumers of these panels must supply the matching `xp_display.h` and Rust
+archive. Missing linkage fails the build. The five SDK-only backends retain
+their C++ implementations.
+
+`FREEINK_SSD1677_CONFIG` still names a function returning a persistent
+`const Ssd1677Config&`. Its LUT pointers must refer to immutable storage for the
+driver's lifetime; every non-null LUT supplies 110 bytes. The adapter borrows a
+validated, versioned descriptor without allocation. Null optional factory/fast/
+full/half LUTs preserve the existing fallback behavior. A null grayscale LUT is
+valid only when both grayscale capabilities are disabled. A custom config takes
+precedence over fast-DU shortcut flags. `SSD1677_PROBE_DEBUG=1` enables the existing
+refresh strings; absent or zero disables them and their Rust clock callbacks.
+
+Run the five scripts in `libs/display/FreeInkDisplay/test/host` against a matching
+consumer checkout. `FREEINK_READER_ROOT` selects that checkout (the parent of this
+SDK by default); `FREEINK_RUST_ARCHIVE` can select an already built host archive.
+The tests exercise the production adapter and board policy. Their small archived
+LUT fixtures are test-only references, not linked firmware data.
+
 ## Adding a new device
 
 1. Add a `BoardProfile` to `BoardConfig.h` (pins, geometry, controller, input

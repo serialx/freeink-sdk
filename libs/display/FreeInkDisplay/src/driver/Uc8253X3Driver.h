@@ -29,106 +29,17 @@ struct Uc8253LutBank {
 };
 
 struct Uc8253X3Config {
-  Uc8253LutBank normal;    // condition-pass / settle (CDI 0xA9)
-  Uc8253LutBank half;      // scrub (CDI 0xA9)
-  Uc8253LutBank fast;      // turbo differential (CDI 0x29)
-  Uc8253LutBank full;      // OEM full / factory (CDI 0x29)
-  Uc8253LutBank gc;        // OEM 4-level grayscale nudge (CDI 0x29)
-  Uc8253LutBank preBwMid;  // OEM grayscale preconditioning settle (CDI 0xA9)
-  uint8_t lutLen;          // bytes per LUT sent to the controller (42)
-  const Uc8253LutBank *directGray =
-      nullptr; // optional direct grayscale waveform
+  Uc8253LutBank normal;                       // condition-pass / settle (CDI 0xA9)
+  Uc8253LutBank half;                         // scrub (CDI 0xA9)
+  Uc8253LutBank fast;                         // turbo differential (CDI 0x29)
+  Uc8253LutBank full;                         // OEM full / factory (CDI 0x29)
+  Uc8253LutBank gc;                           // OEM 4-level grayscale nudge (CDI 0x29)
+  Uc8253LutBank preBwMid;                     // OEM grayscale preconditioning settle (CDI 0xA9)
+  uint8_t lutLen;                             // bytes per LUT sent to the controller (42)
+  const Uc8253LutBank* directGray = nullptr;  // optional direct grayscale waveform
 };
 
 const Uc8253X3Config& uc8253X3DefaultConfig();
-
-class Uc8253X3Driver : public PanelDriver {
- public:
-  explicit Uc8253X3Driver(const Uc8253X3Config& cfg = uc8253X3DefaultConfig());
-
-  uint32_t spiHz() const override;
-  BusyPolarity busyPolarity() const override { return BusyPolarity::X3TwoPhase; }
-  PanelGeometry geometry() const override;
-
-  void begin(EpdBus& bus) override;
-  void deepSleep(EpdBus& bus) override;
-
-  void display(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode, bool turnOff) override;
-  // Refresh split: displayStart fires the waveform and returns while the ~130-770 ms
-  // X3 waveform runs (so the render task can overlap non-SPI work); displayFinish
-  // waits BUSY out and runs the post-waveform DTM1 sync + conditioning passes.
-  // display() above is exactly displayStart()+displayFinish().
-  bool displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode, bool turnOff) override;
-  void displayFinish(EpdBus& bus, const uint8_t* fb) override;
-  bool supportsAsyncDisplay() const override { return true; }
-
-  void beginGrayscale(EpdBus &bus, const uint8_t *fb, GrayscaleMode mode,
-                            RefreshMode fallback, bool turnOff) override;
-  void displayGrayscaleBase(EpdBus &bus, const uint8_t *fb,
-                                  RefreshMode fallback, bool turnOff) override;
-  void preconditionGrayscale(EpdBus &bus, uint16_t x, uint16_t y, uint16_t w,
-                             uint16_t h) override;
-  GrayscaleCapabilities grayscaleCapabilities(
-      GrayscaleMode mode = GrayscaleMode::Overlay) const override {
-    if (mode == GrayscaleMode::Direct && !_cfg.directGray) return {};
-    if (mode == GrayscaleMode::Absolute || mode == GrayscaleMode::Direct)
-      return {GrayscaleEncoding::AbsolutePlanes,
-              mode == GrayscaleMode::Direct ? GrayscaleBase::Combined : GrayscaleBase::Separate,
-              true, false, false};
-    if (mode != GrayscaleMode::Overlay) return {};
-    return {GrayscaleEncoding::OverlayMasks, GrayscaleBase::Separate, true,
-            false, false};
-  }
-  void copyGrayscaleLsb(EpdBus& bus, const uint8_t* lsb) override;
-  void copyGrayscaleMsb(EpdBus& bus, const uint8_t* msb) override;
-  void writeGrayscalePlaneStrip(EpdBus& bus, GrayPlane plane, const uint8_t* rows, uint16_t yStart,
-                                uint16_t numRows) override;
-  void displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, const unsigned char* lut, bool factoryMode) override;
-  void cleanupGrayscaleBuffers(EpdBus& bus, const uint8_t* bw) override;
-  void grayscaleRevert(EpdBus& bus, const uint8_t* fb) override;
-
-  void requestResync(uint8_t settlePasses) override;
-  void skipInitialResync() override;
-
-private:
-  void initController(EpdBus &bus);
-  void loadBank(EpdBus &bus, const Uc8253LutBank &bank);
-  void loadBankCdi(EpdBus &bus, uint8_t cdi0, uint8_t cdi1,
-                   const Uc8253LutBank &bank);
-  void triggerRefresh(EpdBus &bus, bool turnOff, const char *label = " X3_DRF");
-  void grayWindowIn(EpdBus &bus);
-
-  const Uc8253X3Config& _cfg;
-
-  uint16_t _w;
-  uint16_t _h;
-  uint16_t _wb;
-  uint32_t _bufferSize;
-
-  bool _isScreenOn = false;
-  bool _redRamSynced = false;
-  bool _inGrayscaleMode = false;
-  bool _absoluteInput = false;
-  bool _directGrayPass = false;
-  bool _directGrayOnPanel = false;
-  uint8_t _initialFullSyncsRemaining = 0;
-  bool _forceFullSyncNext = false;
-  uint8_t _forcedConditionPassesNext = 0;
-  struct GrayState {
-    bool lastBaseWasPartial = false;
-    bool lsbValid = false;
-  } _grayState;
-
-  // Refresh split state: what displayStart() decided, replayed by displayFinish()
-  // for the post-waveform DTM1 sync + conditioning. _pendingRefresh guards against
-  // a displayFinish() with no matching displayStart(). The just-displayed frame is
-  // NOT stashed here: the facade re-supplies it fresh to displayFinish() because
-  // the caller may release/realloc the buffer holding it in the gap.
-  bool _pendingRefresh = false;
-  bool _pendingTurnOff = false;
-  bool _pendingDoFullSync = false;
-  bool _pendingFastMode = false;
-};
 
 PanelDriver& uc8253X3Driver();
 

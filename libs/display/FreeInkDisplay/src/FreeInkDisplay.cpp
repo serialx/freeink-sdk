@@ -30,11 +30,7 @@
 #if FREEINK_DEVICE_PICCO || FREEINK_DEVICE_STICKY
 #include "driver/Ssd2677Driver.h"
 #endif
-#if defined(FREEINK_RUST_PANEL) && FREEINK_RUST_PANEL
 #include "driver/RustPanelDriver.h"
-#elif FREEINK_DRIVER_UC8253_X3
-#include "driver/Uc8253X3Driver.h"
-#endif
 #if FREEINK_DRIVER_UC8279
 #include "driver/Uc8279Driver.h"
 #endif
@@ -188,11 +184,7 @@ void FreeInkDisplay::selectDriver() {
       }
 #endif
 #if FREEINK_DRIVER_UC8253_X3
-#if defined(FREEINK_RUST_PANEL) && FREEINK_RUST_PANEL
-      _driver = &rustUc8253X3Driver();
-#else
       _driver = &uc8253X3Driver();
-#endif
 #endif
       break;
 #endif
@@ -235,11 +227,7 @@ void FreeInkDisplay::selectDriver() {
 #if FREEINK_DRIVER_UC8279C
       _driver = &uc8279cA4Driver();
 #elif FREEINK_DRIVER_SSD1677
-#if defined(FREEINK_RUST_PANEL) && FREEINK_RUST_PANEL && !defined(FREEINK_SSD1677_CONFIG) && !defined(SSD1677_PROBE_DEBUG)
-      _driver = &rustSsd1677Driver();
-#else
       _driver = &ssd1677Driver();
-#endif
 #elif FREEINK_DRIVER_PAPER_MONO
       _driver = &paperMonoDriver();
 #elif FREEINK_DRIVER_UC8253_MURPHY
@@ -249,11 +237,7 @@ void FreeInkDisplay::selectDriver() {
 #elif FREEINK_DRIVER_ED2208
       _driver = &ed2208M5Driver();
 #elif FREEINK_DRIVER_UC8253_X3
-#if defined(FREEINK_RUST_PANEL) && FREEINK_RUST_PANEL
-      _driver = &rustUc8253X3Driver();
-#else
       _driver = &uc8253X3Driver();
-#endif
 #elif FREEINK_DRIVER_LGFX_EPD
       _driver = &lgfxEpdDriver();
 #elif FREEINK_DRIVER_IT8951

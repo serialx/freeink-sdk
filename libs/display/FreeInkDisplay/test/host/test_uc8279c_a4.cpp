@@ -1,11 +1,15 @@
+#include <BoardConfig.h>
+
 #include <cassert>
 #include <iostream>
 #include <vector>
 
-#include "driver/Uc8279cA4Driver.h"
+#include "src/driver/Uc8279cA4Driver.h"
 
 int main() {
   using namespace freeink;
+  BoardConfig::ACTIVE.displayWidth = 768;
+  BoardConfig::ACTIVE.displayHeight = 552;
   constexpr size_t bytes = 768 / 8 * 552;
   std::vector<uint8_t> bw(bytes, 0xff), gray(bytes, 0xaa);
   EpdBus bus;
@@ -185,5 +189,6 @@ int main() {
   assert(bus.refreshes == wakeStart + 2 && "first paint after wake must drive inverse, then target");
   driver.display(bus, bw.data(), nullptr, RefreshMode::Fast, false);
   assert(bus.interval == 0xd7 && bus.lutBytes == 49);
-  std::cout << "PASS: A4 FAST cadence, post-AA pixel transitions, retained baseline, explicit cleanup, four-gray and Gray3 wire encoding and wake\n";
+  std::cout << "PASS: A4 FAST cadence, post-AA pixel transitions, retained baseline, explicit cleanup, four-gray and "
+               "Gray3 wire encoding and wake\n";
 }

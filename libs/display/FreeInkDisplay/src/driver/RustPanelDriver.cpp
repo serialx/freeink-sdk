@@ -1,5 +1,5 @@
 #include "RustPanelDriver.h"
-#if defined(FREEINK_RUST_PANEL) && FREEINK_RUST_PANEL
+
 #include <BoardConfig.h>
 #include <esp_heap_caps.h>
 #if __has_include(<esp_rom_sys.h>)
@@ -17,6 +17,39 @@ extern "C" uint32_t xp_display_platform_increment(uint32_t* value) {
 #include "Uc8179Driver.h"
 #include "Uc8279X4Driver.h"
 namespace freeink {
+#if FREEINK_DRIVER_SSD1677
+const Ssd1677Config& ssd1677DefaultConfig() {
+  static const Ssd1677Config config = [] {
+    XpDisplaySsd1677Config raw{};
+    xp_display_ssd1677_default_config(&raw);
+    Ssd1677Config c{};
+    for (unsigned i = 0; i < 5; ++i) c.booster[i] = raw.booster[i];
+    c.driverOutputScan = raw.scan;
+    c.borderWaveformInit = raw.border_init;
+    c.halfRefreshTemp = raw.half_temp;
+    c.grayLut = raw.gray.data;
+    c.fullSeqOverride = raw.full_seq;
+    c.fastSeqOverride = raw.fast_seq;
+    c.halfSeqOverride = raw.half_seq;
+    c.borderWaveformFull = raw.border_full;
+    c.borderWaveformFast = raw.border_fast;
+    c.borderWaveformHalf = raw.border_half;
+    c.borderWaveformGray = raw.border_gray;
+    c.grayPowerUpFirst = raw.gray_power_first;
+    c.absoluteGrayscale = raw.absolute;
+    c.overlayGrayscale = raw.overlay;
+    c.writeSecondUpdateControlByte = raw.second_control;
+    c.restoreInternalTemperature = raw.restore_temp;
+    c.blackPulseClean = raw.black_pulse;
+    // Preserve the SDK helper's null factory override.
+    return c;
+  }();
+  return config;
+}
+#ifdef FREEINK_SSD1677_CONFIG
+const Ssd1677Config& FREEINK_SSD1677_CONFIG();
+#endif
+#endif
 #if FREEINK_DRIVER_UC8253_X3
 const Uc8253X3Config& uc8253X3DefaultConfig() {
   static const uint8_t* direct[5];
@@ -372,6 +405,20 @@ XpDisplayBus busTable(BusContext& ctx) {
               Serial.printf("[SSD1677] Window allocation failed: %u bytes\n", static_cast<unsigned>(a));
 #endif
             }
+#if defined(SSD1677_PROBE_DEBUG) && SSD1677_PROBE_DEBUG && FREEINK_DRIVER_SSD1677
+            if (event == XP_DISPLAY_DIAG_SSD_REFRESH) {
+              static constexpr const char* modes[] = {"FULL", "HALF", "FAST"};
+              if (a >= sizeof(modes) / sizeof(modes[0])) return;
+              const char* mode = modes[a];
+              if (d) {
+                esp_rom_printf("[SSD1677] %s refresh %ums (ctrl2=0x%x, seq)\n", mode, static_cast<unsigned>(b),
+                               static_cast<unsigned>(c));
+              } else {
+                esp_rom_printf("[SSD1677] %s refresh %ums (ctrl2=0x%x)\n", mode, static_cast<unsigned>(b),
+                               static_cast<unsigned>(c));
+              }
+            }
+#endif
 #if defined(ENABLE_SERIAL_LOG) && FREEINK_DRIVER_PAPER_MONO
             switch (event) {
               case XP_DISPLAY_DIAG_PAPER_OTP:
@@ -437,8 +484,43 @@ RustPanelDriver::RustPanelDriver(uint32_t controller, void* storage, uint32_t st
     config.controller_config_size = sizeof(custom);
   }
 #endif
-#if FREEINK_DRIVER_SSD1677 && !defined(FREEINK_SSD1677_CONFIG) && !defined(SSD1677_PROBE_DEBUG)
+#if FREEINK_DRIVER_SSD1677
   if (controller == XP_DISPLAY_SSD1677) {
+#if defined(SSD1677_PROBE_DEBUG) && SSD1677_PROBE_DEBUG
+    config.flags |= XP_DISPLAY_SSD1677_DIAGNOSTICS;
+#endif
+#ifdef FREEINK_SSD1677_CONFIG
+    static const XpDisplaySsd1677Config custom = [] {
+      const auto& c = FREEINK_SSD1677_CONFIG();
+      const auto lut = [](const uint8_t* p) { return XpDisplaySsd1677Lut{p, p ? 110u : 0u}; };
+      return XpDisplaySsd1677Config{1,
+                                    sizeof(XpDisplaySsd1677Config),
+                                    {c.booster[0], c.booster[1], c.booster[2], c.booster[3], c.booster[4]},
+                                    c.driverOutputScan,
+                                    c.borderWaveformInit,
+                                    c.halfRefreshTemp,
+                                    c.fullSeqOverride,
+                                    c.fastSeqOverride,
+                                    c.halfSeqOverride,
+                                    c.borderWaveformFull,
+                                    c.borderWaveformFast,
+                                    c.borderWaveformHalf,
+                                    c.borderWaveformGray,
+                                    c.grayPowerUpFirst,
+                                    c.absoluteGrayscale,
+                                    c.overlayGrayscale,
+                                    c.writeSecondUpdateControlByte,
+                                    c.restoreInternalTemperature,
+                                    c.blackPulseClean,
+                                    lut(c.grayLut),
+                                    lut(c.factoryGrayLut),
+                                    lut(c.fastLut),
+                                    lut(c.fullLut),
+                                    lut(c.halfLut)};
+    }();
+    config.controller_config = &custom;
+    config.controller_config_size = sizeof(custom);
+#endif
     if (board.orientation.mirrorX) config.flags |= XP_DISPLAY_SSD1677_MIRROR_X;
     if (board.orientation.mirrorY) config.flags |= XP_DISPLAY_SSD1677_MIRROR_Y;
 #if defined(FREEINK_DISPLAY_FLIPPED) || defined(FLIPPED)
@@ -475,10 +557,10 @@ RustPanelDriver::RustPanelDriver(uint32_t controller, void* storage, uint32_t st
       default:
         break;
     }
-#ifdef FREEINK_X4_FAST_DU_SHORTCUT
+#if defined(FREEINK_X4_FAST_DU_SHORTCUT) && !defined(FREEINK_SSD1677_CONFIG)
     if (board.board == BoardConfig::Board::XteinkX4) config.flags |= XP_DISPLAY_SSD1677_FAST_DU;
 #endif
-#ifdef FREEINK_X4PRO_FAST_DU_SHORTCUT
+#if defined(FREEINK_X4PRO_FAST_DU_SHORTCUT) && !defined(FREEINK_SSD1677_CONFIG)
     if (board.board == BoardConfig::Board::XteinkX4Pro) config.flags |= XP_DISPLAY_SSD1677_FAST_DU;
 #endif
   }
@@ -754,15 +836,26 @@ void RustPanelDriver::setCustomLut(EpdBus& bus, bool enabled, const unsigned cha
   r.lut_len = lut && controller_ == XP_DISPLAY_SSD1677 ? 110 : 0;
   invoke(&bus, r);
 }
-#if FREEINK_DRIVER_SSD1677 && !defined(FREEINK_SSD1677_CONFIG) && !defined(SSD1677_PROBE_DEBUG)
-PanelDriver& rustSsd1677Driver() {
+#if FREEINK_DRIVER_SSD2677
+PanelDriver& ssd2677Driver() {
+  alignas(XP_DISPLAY_STATE_ALIGN) static uint8_t state[XP_DISPLAY_SSD2677_STATE_BYTES];
+  static uint8_t scratch[1024];
+  static const XpDisplayRetainedConfig config{scratch, sizeof(scratch), 0};
+  static RustPanelDriver driver(XP_DISPLAY_SSD2677, state, sizeof(state),
+                                BoardConfig::ACTIVE.board == BoardConfig::Board::Sticky ? 1 : 0, &config,
+                                sizeof(config));
+  return driver;
+}
+#endif
+#if FREEINK_DRIVER_SSD1677
+PanelDriver& ssd1677Driver() {
   alignas(void*) static uint8_t state[XP_DISPLAY_SSD1677_STATE_BYTES];
   static RustPanelDriver instance(XP_DISPLAY_SSD1677, state, sizeof(state), 0, nullptr, 0);
   return instance;
 }
 #endif
 #if FREEINK_DRIVER_UC8253_X3
-PanelDriver& rustUc8253X3Driver() {
+PanelDriver& uc8253X3Driver() {
   alignas(void*) static uint8_t state[XP_DISPLAY_UC8253_X3_STATE_BYTES];
   static RustPanelDriver instance(XP_DISPLAY_UC8253_X3, state, sizeof(state), 0, nullptr, 0);
   return instance;
@@ -797,7 +890,6 @@ PanelDriver& uc8279cA4Driver() {
 }
 #endif
 }  // namespace freeink
-#endif
 
 #if defined(XP_STRIP_RENDER) && XP_STRIP_RENDER
 bool freeink::RustPanelDriver::setFrameSource(XpDisplaySource* source) {

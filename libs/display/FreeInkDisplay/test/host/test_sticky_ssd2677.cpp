@@ -1,16 +1,16 @@
 // Seeed Sticky with the SSD2677 panel: CMD 0x70 probe, stock init table, OTP
 // waveform latch per mode, full refresh old == new, rows bottom-to-top, fast
 // refresh keeping the rails on.
+#include <SPI.h>  // stub: counts shared-bus restarts
+
 #include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <vector>
-
-#include <SPI.h>  // stub: counts shared-bus restarts
 #define private public
+#include "golden_luts/Ssd2677Luts.h"
 #include "src/driver/Ssd1677Driver.h"
 #include "src/driver/Ssd2677Driver.h"
-#include "src/lut/Ssd2677Luts.h"
 #undef private
 
 using namespace freeink;

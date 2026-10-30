@@ -87,7 +87,11 @@ python3 libs/display/FreeInkDisplay/test/host/run_uc8253_power.py
 python3 libs/display/FreeInkDisplay/test/host/run_picco.py
 ```
 
-These compile production drivers against recording buses. The Pro suite also
+These need a C++20 compiler and the matching CrossPoint Rust workspace/toolchain.
+Set `FREEINK_READER_ROOT` when the SDK is not inside that consumer checkout;
+`FREEINK_RUST_ARCHIVE` optionally selects a prebuilt host archive. They compile
+the production Rust adapter against recording buses and retain immutable LUT
+fixtures only as test expectations. The Pro suite also
 compiles the facade in single- and dual-buffer modes. The Picco suite builds the
 SSD1677/SSD2677 drivers as a Picco and as a Sticky, including each board's
 bit-banged panel probe. The checks cover transfer

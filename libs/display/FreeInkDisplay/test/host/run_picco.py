@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compile the SSD1677/SSD2677 drivers as Picco and Sticky builds and check each panel."""
 from pathlib import Path
+from rust_host import prepare, compile_test
 import os
 import shutil
 import subprocess
@@ -13,20 +14,10 @@ LIB = HERE.parents[1]
 def build(board, device_macro, test_cpp, directory):
     """Build test_cpp against the SSD1677/SSD2677 drivers as a `board` build."""
     root = Path(directory)
-    for folder in ("src/driver", "src/bus", "src/lut", "include"):
-        (root / folder).mkdir(parents=True, exist_ok=True)
-    for name in ("Ssd1677", "Ssd2677"):
-        for ext in ("h", "cpp"):
-            shutil.copy2(LIB / f"src/driver/{name}Driver.{ext}", root / f"src/driver/{name}Driver.{ext}")
-    shutil.copy2(LIB / "src/driver/PanelDriver.h", root / "src/driver/PanelDriver.h")
-    shutil.copy2(LIB / "include/GrayscaleCapabilities.h", root / "include/GrayscaleCapabilities.h")
-    for name in ("Ssd1677Luts.h", "Ssd2677Luts.h"):
-        shutil.copy2(LIB / f"src/lut/{name}", root / f"src/lut/{name}")
-    shutil.copy2(HERE / "pro_stubs/EpdBus.h", root / "src/bus/EpdBus.h")
-    for name in ("esp_heap_caps.h", "sdkconfig.h"):
-        shutil.copy2(HERE / "pro_stubs" / name, root / name)
+    prepare(root)
     # SPI stub with the shared-bus pin re-attach the Sticky panel probe uses.
     (root / "SPI.h").write_text((HERE / "pro_stubs/SPI.h").read_text() + """
+#include <cstdint>
 struct spi_t {};
 inline int fakeSpiRestarts;
 struct FakeSpi {
@@ -37,12 +28,9 @@ struct FakeSpi {
 };
 inline FakeSpi SPI;
 """)
-    board_h = (HERE / "pro_stubs/BoardConfig.h").read_text().replace("MetalioEInk4 };", "MetalioEInk4, Picco };")
-    (root / "BoardConfig.h").write_text(board_h.replace("Board board=Board::XteinkX4Pro;", "struct { int8_t miso=40; } sd;\n  " + f"Board board=Board::{board};").replace(
-        "inline bool isX4Classic() { return false; }",
-        "inline bool isX4Classic() { return false; }\ninline bool isPicco() { return ACTIVE.board == Board::Picco; }"))
     # Arduino stub plus a fake SSD1677 that answers CMD 0x2E with fakePanelId.
     arduino = (HERE / "pro_stubs/Arduino.h").read_text().replace("inline int digitalRead(int) { return 0; }\n", "")
+    arduino = arduino[:arduino.index("#define LOW")]
     arduino += """
 #define LOW 0
 #define INPUT 1
@@ -81,18 +69,7 @@ struct FakeSerial { explicit operator bool() const { return false; } template <c
 inline FakeSerial Serial;
 """
     (root / "Arduino.h").write_text('#include "BoardConfig.h"\n' + arduino)
-    exe = root / board.lower()
-    subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-Wno-unused-parameter",
-                    "-Wno-unused-function", "-DARDUINO=1", f"-D{device_macro}=1", "-DFREEINK_DRIVER_SSD2677=1", "-I" + str(root),
-                    str(HERE / test_cpp), str(root / "src/driver/Ssd1677Driver.cpp"),
-                    str(root / "src/driver/Ssd2677Driver.cpp"), "-o", str(exe)],
-                   check=True)
-    # The facade's driver selection must compile in this build.
-    shutil.copy2(LIB / "src/FreeInkDisplay.cpp", root / "src/FreeInkDisplay.cpp")
-    shutil.copy2(LIB / "include/FreeInkDisplay.h", root / "include/FreeInkDisplay.h")
-    subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-fsyntax-only", "-DARDUINO=1",
-                    f"-D{device_macro}=1", "-DFREEINK_DRIVER_SSD2677=1", "-DFREEINK_DRIVER_SSD1677=1", "-I" + str(root),
-                    "-I" + str(root / "include"), str(root / "src/FreeInkDisplay.cpp")], check=True)
+    exe = compile_test(root, HERE / test_cpp, [device_macro+"=1", "FREEINK_TEST_BOARD="+board], facade=True)
     return exe
 
 

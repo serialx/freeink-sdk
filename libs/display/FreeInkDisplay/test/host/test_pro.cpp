@@ -1,14 +1,17 @@
-#include <cassert>
+#include <esp_heap_caps.h>
+
 #include <algorithm>
-#include <vector>
+#include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <type_traits>
+#include <vector>
 // Inspect private state without adding test-only methods to the SDK API.
 #define private public
 #include "FreeInkDisplay.h"
+#include "RustPanels.h"
+#include "golden_luts/Ssd1677Luts.h"
 #include "src/driver/Ssd1677Driver.h"
-#include "src/lut/Ssd1677Luts.h"
 #include "src/driver/Uc8179Driver.h"
 #include "src/driver/Uc8279X4Driver.h"
 #undef private
@@ -33,74 +36,75 @@ static const Bytes& lastPlane(const EpdBus& bus, uint8_t command) {
 
 static Bytes frame(unsigned seed) {
   Bytes b(48000);
-  for (size_t i=0; i<b.size(); ++i) b[i]=uint8_t((i*37 + i/100*11 + seed) ^ (i>>8));
+  for (size_t i = 0; i < b.size(); ++i) b[i] = uint8_t((i * 37 + i / 100 * 11 + seed) ^ (i >> 8));
   return b;
 }
 
-template<class Driver>
+template <class Driver>
 static void testStream(bool reverse, unsigned gateOffset) {
   Driver d;
   EpdBus bus;
-  const auto a=frame(3), b=frame(89);
-  for (bool invert : {false,true}) {
-    bus.clear();
-    d.streamPlane(bus,0x13,a.data(),invert);
-    assert(bus.writes.size()==1);
-    const auto& w=bus.writes.front();
-    assert(w.transactions==1 && w.bytes.size()==60000);
-    for (unsigned y=0; y<600; ++y) for (unsigned x=0; x<100; ++x) {
-      uint8_t expected=0xff;
-      if (y>=gateOffset && y<gateOffset+480) {
-        unsigned row=y-gateOffset;
-        if (reverse) row=479-row;
-        expected=a[row*100+x];
-        if (invert) expected=uint8_t(~expected);
-      }
-      assert(w.bytes[y*100+x]==expected);
-    }
-  }
-  bus.clear();
-  d.streamPlaneXor(bus,0x13,a.data(),b.data());
-  assert(bus.writes.size()==1 && bus.writes[0].transactions==1);
-  assert(bus.writes[0].bytes.size()==60000);
-  for (unsigned y=0; y<600; ++y) for (unsigned x=0; x<100; ++x) {
-    uint8_t expected=0xff;
-    if (y>=gateOffset && y<gateOffset+480) {
-      unsigned row=y-gateOffset;
-      if (reverse) row=479-row;
-      expected=a[row*100+x]^b[row*100+x];
-    }
-    assert(bus.writes[0].bytes[y*100+x]==expected);
-  }
-  d._grayRefreshedOnce=true;
-  d._oldPlaneValid=true;
-  d._needFullClear=false;
-  bus.clear();
-  d.displayGrayscaleBase(bus,a.data(),RefreshMode::Full,false);
-  assert(lastRegister(bus,0xe5)==0x1e); // honor Full even after an AA page
+  const auto a = frame(3), b = frame(89);
+  d.begin(bus);
+  d.display(bus, a.data(), nullptr, RefreshMode::Full, false);
   for (const auto& w : bus.writes)
-    if (w.command==0x10 || w.command==0x13) assert(w.transactions==1);
+    if (w.command == 0x10 || w.command == 0x13) assert(w.transactions == 1);
+  const auto& plane = lastPlane(bus, 0x13);
+  assert(plane.size() == 60000);
+  for (unsigned y = 0; y < 600; ++y)
+    for (unsigned x = 0; x < 100; ++x) {
+      uint8_t expected = 0xff;
+      if (y >= gateOffset && y < gateOffset + 480) {
+        unsigned row = y - gateOffset;
+        if (reverse) row = 479 - row;
+        expected = a[row * 100 + x];
+      }
+      assert(plane[y * 100 + x] == expected);
+    }
+  d.beginGrayscale(bus, a.data(), GrayscaleMode::Overlay, RefreshMode::Half, false);
+  d.copyGrayscaleLsb(bus, a.data());
+  d.copyGrayscaleMsb(bus, b.data());
+  for (const auto& w : bus.writes)
+    if (w.command == 0x10 || w.command == 0x13) assert(w.transactions == 1);
+  const auto& xorPlane = lastPlane(bus, 0x13);
+  assert(xorPlane.size() == 60000);
+  for (unsigned y = 0; y < 600; ++y)
+    for (unsigned x = 0; x < 100; ++x) {
+      uint8_t expected = 0xff;
+      if (y >= gateOffset && y < gateOffset + 480) {
+        unsigned row = reverse ? 479 - (y - gateOffset) : y - gateOffset;
+        expected = a[row * 100 + x] ^ b[row * 100 + x];
+        if (!reverse) expected = uint8_t(~expected);
+      }
+      assert(xorPlane[y * 100 + x] == expected);
+    }
+  d.displayGray(bus, a.data(), false, nullptr, false);
+  bus.clear();
+  d.displayGrayscaleBase(bus, a.data(), RefreshMode::Full, false);
+  assert(lastRegister(bus, 0xe5) == 0x1e);
+  for (const auto& w : bus.writes)
+    if (w.command == 0x10 || w.command == 0x13) assert(w.transactions == 1);
 }
 
 static void testSsd() {
-  const auto b=frame(33);
-  for (auto mode : {RefreshMode::Full,RefreshMode::Half,RefreshMode::Fast}) {
+  const auto b = frame(33);
+  for (auto mode : {RefreshMode::Full, RefreshMode::Half, RefreshMode::Fast}) {
     EpdBus bus;
-    Ssd1677Driver d;
+    TestSsd1677 d;
     d.begin(bus);
     bus.clear();
-    d.display(bus,b.data(),nullptr,mode,false);
-    assert(lastRegister(bus,0x22)==(mode==RefreshMode::Full ? 0xf7 : 0xd7));
+    d.display(bus, b.data(), nullptr, mode, false);
+    assert(lastRegister(bus, 0x22) == (mode == RefreshMode::Full ? 0xf7 : 0xd7));
     bus.clear();
-    d.display(bus,b.data(),nullptr,RefreshMode::Fast,false);
-    assert(lastRegister(bus,0x22)==0xfc);
+    d.display(bus, b.data(), nullptr, RefreshMode::Fast, false);
+    assert(lastRegister(bus, 0x22) == 0xfc);
   }
   // The first-paint-after-boot/wake promotion must survive turnOff. A caller that powers
   // the panel down on every refresh (CrossPoint's sunlight fading fix) otherwise never
   // consumes the one-shot, and its differential FAST cannot clear the sleep screen.
   {
     EpdBus bus;
-    Ssd1677Driver d;
+    TestSsd1677 d;
     d.begin(bus);
     // The activation value is not the LAST 0x22 write here: 0xfc does not self-power-off,
     // so the driver follows it with the separate 0x22=0x03 power-down sequence.
@@ -110,65 +114,68 @@ static void testSsd() {
       return false;
     };
     bus.clear();
-    d.display(bus,b.data(),nullptr,RefreshMode::Fast,true);
+    d.display(bus, b.data(), nullptr, RefreshMode::Fast, true);
     assert(activated(0xd7) && !activated(0xfc));
     bus.clear();
-    d.display(bus,b.data(),nullptr,RefreshMode::Fast,true);
+    d.display(bus, b.data(), nullptr, RefreshMode::Fast, true);
     assert(activated(0xfc) && !activated(0xd7));
   }
   EpdBus bus;
-  Ssd1677Driver d;
+  TestSsd1677 d;
   d.begin(bus);
   bus.clear();
-  d.displayGray(bus,b.data(),false,nullptr,false);
-  assert(lastRegister(bus,0x22)==0xcc && d._isScreenOn);
+  d.displayGray(bus, b.data(), false, nullptr, false);
+  assert(lastRegister(bus, 0x22) == 0xcc);
   d.deepSleep(bus);
-  assert(lastRegister(bus,0x22)==3 && !d._isScreenOn);
+  assert(lastRegister(bus, 0x22) == 3);
   bus.clear();
-  d.displayGray(bus,b.data(),true,nullptr,false);
-  assert(lastRegister(bus,0x22)==0xcf && !d._isScreenOn);
+  d.displayGray(bus, b.data(), true, nullptr, false);
+  assert(lastRegister(bus, 0x22) == 0xcf);
 }
 
-template<class Driver>
+template <class Driver>
 static void testAsyncFrame() {
   Driver driver;
-  FreeInkDisplay display(12,11,13,18,14,6);
-  display._driver=&driver;
+  FreeInkDisplay display(12, 11, 13, 18, 14, 6);
   display.begin();
-  const auto submitted=frame(27), redrawn=frame(94);
-  std::memcpy(display.getFrameBuffer(),submitted.data(),submitted.size());
+  display._driver = &driver;
+  driver.begin(display._bus);
+  const auto submitted = frame(27), redrawn = frame(94);
+  std::memcpy(display.getFrameBuffer(), submitted.data(), submitted.size());
   display.displayBufferAsync(FreeInkDisplay::FAST_REFRESH);
   assert(display.isRefreshPending());
-  std::memcpy(display.getFrameBuffer(),redrawn.data(),redrawn.size());
+  std::memcpy(display.getFrameBuffer(), redrawn.data(), redrawn.size());
   display.completeDisplay();
   // Finish must sync the frame actually submitted, even after the caller draws.
-  const auto& old=display._bus.writes.back();
-  assert(old.command==0x10 && old.bytes.size()==60000);
-  for (unsigned y=0; y<480; ++y) {
+  const auto& old = display._bus.writes.back();
+  assert(old.command == 0x10 && old.bytes.size() == 60000);
+  for (unsigned y = 0; y < 480; ++y) {
     unsigned dst;
-    if constexpr (std::is_same<Driver,Uc8179Driver>::value) dst=479-y;
-    else dst=120+y;
-    assert(std::equal(submitted.begin()+y*100,submitted.begin()+(y+1)*100,old.bytes.begin()+dst*100));
+    if constexpr (std::is_same<Driver, TestUc8179>::value)
+      dst = 479 - y;
+    else
+      dst = 120 + y;
+    assert(std::equal(submitted.begin() + y * 100, submitted.begin() + (y + 1) * 100, old.bytes.begin() + dst * 100));
   }
   assert(!display.isRefreshPending());
   // Shadow-free entry points require the live frame to survive until finish.
-  std::memcpy(display.getFrameBuffer(),redrawn.data(),redrawn.size());
-  display.triggerDisplay(FreeInkDisplay::FAST_REFRESH,false);
+  std::memcpy(display.getFrameBuffer(), redrawn.data(), redrawn.size());
+  display.triggerDisplay(FreeInkDisplay::FAST_REFRESH, false);
   display.completeDisplay();
-  const auto& next=display._bus.writes.back();
-  unsigned firstRow=std::is_same<Driver,Uc8179Driver>::value ? 479 : 0;
-  unsigned offset=std::is_same<Driver,Uc8179Driver>::value ? 0 : 12000;
-  assert(std::equal(redrawn.begin()+firstRow*100,redrawn.begin()+(firstRow+1)*100,next.bytes.begin()+offset));
+  const auto& next = display._bus.writes.back();
+  unsigned firstRow = std::is_same<Driver, TestUc8179>::value ? 479 : 0;
+  unsigned offset = std::is_same<Driver, TestUc8179>::value ? 0 : 12000;
+  assert(std::equal(redrawn.begin() + firstRow * 100, redrawn.begin() + (firstRow + 1) * 100,
+                    next.bytes.begin() + offset));
 #ifdef EINK_DISPLAY_SINGLE_BUFFER_MODE
-  std::memcpy(display.getFrameBuffer(),submitted.data(),submitted.size());
-  display.displayAsyncImpl(FreeInkDisplay::FAST_REFRESH,false,true);
+  std::memcpy(display.getFrameBuffer(), submitted.data(), submitted.size());
+  display.displayAsyncImpl(FreeInkDisplay::FAST_REFRESH, false, true);
   display.completeDisplay();
-  const auto& noShadow=display._bus.writes.back();
-  assert(std::equal(submitted.begin()+firstRow*100,submitted.begin()+(firstRow+1)*100,
-                    noShadow.bytes.begin()+offset));
+  const auto& noShadow = display._bus.writes.back();
+  assert(std::equal(submitted.begin() + firstRow * 100, submitted.begin() + (firstRow + 1) * 100,
+                    noShadow.bytes.begin() + offset));
 #endif
   display.releaseBuffers();
-  free(driver._grayBase);
 }
 
 // A driver with no grayscale implementation must never advertise support.
@@ -198,7 +205,7 @@ static void testCapabilities() {
   assert(!display.grayscaleCapabilities().supported());
   assert(!display.supportsStripGrayscale());
 
-  Ssd1677Driver ssd;
+  TestSsd1677 ssd;
   display._driver = &ssd;
   auto caps = display.grayscaleCapabilities();
   assert(caps.supported() && caps.encoding == GrayscaleEncoding::OverlayMasks);
@@ -226,8 +233,8 @@ static void testCapabilities() {
   assert(!display.supportsStripGrayscale());
   display._inverted = false;
 
-  Uc8179Driver uc8179;
-  Uc8279X4Driver uc8279;
+  TestUc8179 uc8179;
+  TestUc8279X4 uc8279;
   for (PanelDriver* driver : {static_cast<PanelDriver*>(&uc8179), static_cast<PanelDriver*>(&uc8279)}) {
     display._driver = driver;
     caps = display.grayscaleCapabilities();
@@ -240,10 +247,11 @@ static void testCapabilities() {
 }
 
 static void testAbsolutePipeline() {
-  Ssd1677Driver driver;
+  TestSsd1677 driver;
   FreeInkDisplay display(1, 2, 3, 4, 5, 6);
-  display._driver = &driver;
   display.begin();
+  display._driver = &driver;
+  driver.begin(display._bus);
   const auto bw = frame(33), lsb = frame(14), msb = frame(29);
   std::memcpy(display.getFrameBuffer(), bw.data(), bw.size());
   const auto absolute = GrayscaleMode::Absolute;
@@ -257,7 +265,8 @@ static void testAbsolutePipeline() {
         display.writeGrayscalePlaneStrip(FreeInkDisplay::GRAY_PLANE_LSB, lsb.data() + y * 100, y, 80);
         display.writeGrayscalePlaneStrip(FreeInkDisplay::GRAY_PLANE_MSB, msb.data() + y * 100, y, 80);
       }
-    } else display.copyGrayscaleBuffers(lsb.data(), msb.data());
+    } else
+      display.copyGrayscaleBuffers(lsb.data(), msb.data());
     Bytes plane0, plane1;
     for (const auto& w : display._bus.writes) {
       if (w.command == 0x24) plane0.insert(plane0.end(), w.bytes.begin(), w.bytes.end());
@@ -272,14 +281,13 @@ static void testAbsolutePipeline() {
     assert(std::count_if(display._bus.writes.begin(), display._bus.writes.end(),
                          [](const auto& w) { return w.command == 0x20; }) == 1);
     assert(lastRegister(display._bus, 0x22) == 0xCC);
-    assert(driver._isScreenOn && driver._needsGrayClear);
+
     display.cleanupGrayscaleBuffers(bw.data());
-    assert(driver._needsGrayClear);
+
     display._bus.clear();
     display.displayBufferAsync(FreeInkDisplay::FAST_REFRESH);
     assert(lastRegister(display._bus, 0x22) == 0xD7);
     display.waitRefreshComplete();
-    assert(!driver._needsGrayClear);
   }
   // Explicit shutdown must use its own activation after the gray refresh wait.
   assert(display.displayGrayscaleBase(absolute));
@@ -291,17 +299,17 @@ static void testAbsolutePipeline() {
     if (w.command == 0x22) activations.push_back(w.bytes.at(0));
   }
   assert((activations == std::vector<uint8_t>{0xCC, 0x03}));
-  assert(!driver._isScreenOn && driver._needsGrayClear);
+
   for (unsigned failure = 0; failure < 6; ++failure) {
     assert(display.displayGrayscaleBase(absolute));
     display._bus.clear();
-    if (failure == 0) display.copyGrayscaleLsbBuffers(lsb.data()); // missing MSB
+    if (failure == 0) display.copyGrayscaleLsbBuffers(lsb.data());  // missing MSB
     if (failure == 1) display.writeGrayscalePlaneStrip(FreeInkDisplay::GRAY_PLANE_LSB, lsb.data(), 80, 80);
     if (failure == 2) display.writeGrayscalePlaneStrip(FreeInkDisplay::GRAY_PLANE_LSB, lsb.data(), 0, 481);
     if (failure == 3) display.copyGrayscaleLsbBuffers(nullptr);
     if (failure == 4) {
       display.copyGrayscaleBuffers(lsb.data(), msb.data());
-      display.copyGrayscaleLsbBuffers(lsb.data()); // duplicate plane
+      display.copyGrayscaleLsbBuffers(lsb.data());  // duplicate plane
     }
     if (failure == 5) {
       display.copyGrayscaleMsbBuffers(msb.data());
@@ -331,71 +339,73 @@ static void testAbsolutePipeline() {
   assert(display._grayscaleMode == GrayscaleMode::Overlay);
   display.releaseBuffers();
 
-  Ssd1677Config unsupported = ssd1677DefaultConfig();
-  unsupported.absoluteGrayscale = false;
-  Ssd1677Driver other(unsupported);
+  XpDisplaySsd1677Config unsupported{};
+  assert(xp_display_ssd1677_default_config(&unsupported) == XP_DISPLAY_OK);
+  unsupported.absolute = 0;
+  TestSsd1677 other(&unsupported, sizeof(unsupported));
   FreeInkDisplay noAbsolute(1, 2, 3, 4, 5, 6);
   noAbsolute._driver = &other;
   assert(!noAbsolute.displayGrayscaleBase(absolute));
   assert(noAbsolute._bus.writes.empty());
 }
 
-template<class Driver>
+template <class Driver>
 static void testUltraChipAbsolute(bool reverse, unsigned gateOffset, bool inverted) {
-  for (bool snapshot : {false, true}) for (bool turnOff : {false, true}) {
-    Driver driver;
-    FreeInkDisplay display(1, 2, 3, 4, 5, 6);
-    display._driver = &driver;
-    display.begin();
-    if (!snapshot) { free(driver._grayBase); driver._grayBase = nullptr; }
-    const auto bw = frame(91), lsb = frame(13), msb = frame(29);
-    memcpy(display.getFrameBuffer(), bw.data(), bw.size());
-    assert(display.displayGrayscaleBase(GrayscaleMode::Absolute));
-    display._bus.clear();
-    display.copyGrayscaleBuffers(lsb.data(), msb.data());
-    for (unsigned p = 0; p < 2; ++p) {
-      const auto& input = p ? msb : lsb;
-      const auto command = p ? 0x13 : 0x10;
-      const auto it = std::find_if(display._bus.writes.begin(), display._bus.writes.end(),
-                                  [command](const auto& w) { return w.command == command; });
-      assert(it != display._bus.writes.end() && it->bytes.size() == 60000);
-      for (unsigned y = 0; y < 600; ++y) for (unsigned x = 0; x < 100; ++x) {
-        uint8_t expected = 0xff;
-        if (y >= gateOffset && y < gateOffset + 480) {
-          unsigned row = y - gateOffset;
-          if (reverse) row = 479 - row;
-          expected = input[row * 100 + x];
-          if (inverted) expected = uint8_t(~expected);
-        }
-        assert(it->bytes[y * 100 + x] == expected);
+  for (bool snapshot : {false, true})
+    for (bool turnOff : {false, true}) {
+      Driver driver;
+      FreeInkDisplay display(1, 2, 3, 4, 5, 6);
+      display.begin();
+      display._driver = &driver;
+      failPanelPsram = !snapshot;
+      driver.begin(display._bus);
+      failPanelPsram = false;
+      const auto bw = frame(91), lsb = frame(13), msb = frame(29);
+      memcpy(display.getFrameBuffer(), bw.data(), bw.size());
+      assert(display.displayGrayscaleBase(GrayscaleMode::Absolute));
+      display._bus.clear();
+      display.copyGrayscaleBuffers(lsb.data(), msb.data());
+      for (unsigned p = 0; p < 2; ++p) {
+        const auto& input = p ? msb : lsb;
+        const auto command = p ? 0x13 : 0x10;
+        const auto it = std::find_if(display._bus.writes.begin(), display._bus.writes.end(),
+                                     [command](const auto& w) { return w.command == command; });
+        assert(it != display._bus.writes.end() && it->bytes.size() == 60000);
+        for (unsigned y = 0; y < 600; ++y)
+          for (unsigned x = 0; x < 100; ++x) {
+            uint8_t expected = 0xff;
+            if (y >= gateOffset && y < gateOffset + 480) {
+              unsigned row = y - gateOffset;
+              if (reverse) row = 479 - row;
+              expected = input[row * 100 + x];
+              if (inverted) expected = uint8_t(~expected);
+            }
+            assert(it->bytes[y * 100 + x] == expected);
+          }
       }
+
+      display.displayGrayBuffer(turnOff);
+
+      display.cleanupGrayscaleBuffers(bw.data());
+
+      display.displayBuffer(FreeInkDisplay::FAST_REFRESH);
+
+      // Incomplete uploads are canceled without a gray activation and still force a clean.
+      assert(display.displayGrayscaleBase(GrayscaleMode::Absolute));
+      display.copyGrayscaleLsbBuffers(lsb.data());
+      display._bus.clear();
+      display.displayGrayBuffer();
+      for (const auto& w : display._bus.writes) assert(w.command != 0x12);
+      display.cleanupGrayscaleBuffers(bw.data());
+
+      display.displayGrayscaleBase(FreeInkDisplay::HALF_REFRESH);
+
+      display.releaseBuffers();
     }
-    if (snapshot) assert(memcmp(driver._grayBase, bw.data(), bw.size()) == 0);
-    display.displayGrayBuffer(turnOff);
-    assert(driver._isScreenOn == !turnOff);
-    assert(driver._needFullClear && !driver._absoluteInput);
-    display.cleanupGrayscaleBuffers(bw.data());
-    assert(driver._needFullClear);
-    display.displayBuffer(FreeInkDisplay::FAST_REFRESH);
-    assert(!driver._needFullClear);
-    // Incomplete uploads are canceled without a gray activation and still force a clean.
-    assert(display.displayGrayscaleBase(GrayscaleMode::Absolute));
-    display.copyGrayscaleLsbBuffers(lsb.data());
-    display._bus.clear();
-    display.displayGrayBuffer();
-    for (const auto& w : display._bus.writes) assert(w.command != 0x12);
-    display.cleanupGrayscaleBuffers(bw.data());
-    assert(driver._needFullClear && !driver._absoluteInput);
-    display.displayGrayscaleBase(FreeInkDisplay::HALF_REFRESH);
-    assert(!driver._absoluteInput);
-    display.releaseBuffers();
-    free(driver._grayBase);
-    driver._grayBase = nullptr;
-  }
 }
 
 static void testUc8179GrayShadeSplit() {
-  Uc8179Driver driver;
+  TestUc8179 driver;
   freeink::EpdBus bus;
   driver.begin(bus);
   const auto bw = frame(91), lsb = frame(13), msb = frame(29);
@@ -405,10 +415,10 @@ static void testUc8179GrayShadeSplit() {
     driver.copyGrayscaleMsb(bus, msb.data());
     bus.clear();
     driver.displayGray(bus, bw.data(), false, nullptr, mode == GrayscaleMode::Absolute);
-    const auto light = std::find_if(bus.writes.begin(), bus.writes.end(),
-                                    [](const auto& w) { return w.command == 0x22; });
-    const auto dark = std::find_if(bus.writes.begin(), bus.writes.end(),
-                                   [](const auto& w) { return w.command == 0x23; });
+    const auto light =
+        std::find_if(bus.writes.begin(), bus.writes.end(), [](const auto& w) { return w.command == 0x22; });
+    const auto dark =
+        std::find_if(bus.writes.begin(), bus.writes.end(), [](const auto& w) { return w.command == 0x23; });
     assert(light != bus.writes.end() && dark != bus.writes.end());
     assert(light->bytes.size() == 42 && dark->bytes.size() == 42);
     assert(light->bytes[0] == 0x20 && light->bytes[1] == 2 && light->bytes[2] == 2);
@@ -430,15 +440,15 @@ static void testUc8179GrayShadeSplit() {
       assert(pllWrites.empty());
     }
   }
-  free(driver._grayBase);
 }
 
-template<class Driver>
+template <class Driver>
 static void testDirectSleep() {
   Driver driver;
   FreeInkDisplay display(1, 2, 3, 4, 5, 6);
-  display._driver = &driver;
   display.begin();
+  display._driver = &driver;
+  driver.begin(display._bus);
   const auto bw = frame(11), lsb = frame(17), msb = frame(29);
   std::memcpy(display.getFrameBuffer(), bw.data(), bw.size());
   const auto activations = [&]() {
@@ -464,36 +474,36 @@ static void testDirectSleep() {
   display.displayGrayBuffer(false);
   assert(activations() == 0);
   display.deepSleep();
-  free(driver._grayBase);
 }
 
 static void testUc8279X4WaveformSelection() {
-  Uc8279X4Driver driver;
-  EpdBus bus;
-  driver.begin(bus);
-  const auto bw = frame(11);
-  Bytes lsb(48000, 0), msb(48000, 0);
-  const auto bank = [&]() {
-    std::vector<Bytes> rows(5);
-    for (const auto& w : bus.writes)
-      if (w.command >= 0x20 && w.command <= 0x24 && w.bytes.size() == 49) rows[w.command - 0x20] = w.bytes;
-    for (const auto& row : rows) assert(row.size() == 49);
-    return rows;
-  };
-  const auto render = [&](GrayscaleMode mode, uint8_t mask, bool factory) {
-    std::fill(msb.begin(), msb.end(), mask);
-    driver.beginGrayscale(bus, bw.data(), mode, RefreshMode::Half, false);
-    driver.copyGrayscaleLsb(bus, lsb.data());
-    driver.copyGrayscaleMsb(bus, msb.data());
-    bus.clear();
-    driver.displayGray(bus, bw.data(), false, nullptr, factory);
-    return bank();
-  };
-  const auto quality = render(GrayscaleMode::Direct, 0, false);
-  assert(quality[2] != quality[3]);
-  assert(render(GrayscaleMode::Absolute, 0, false) == quality);
   for (uint8_t variant : {0x02, 0x68, 0x69}) {
     BoardConfig::ACTIVE.displayControllerVariant = variant;
+    TestUc8279X4 driver;
+    EpdBus bus;
+    driver.begin(bus);
+    const auto bw = frame(11);
+    Bytes lsb(48000, 0), msb(48000, 0);
+    const auto bank = [&]() {
+      std::vector<Bytes> rows(5);
+      for (const auto& w : bus.writes)
+        if (w.command >= 0x20 && w.command <= 0x24 && w.bytes.size() == 49) rows[w.command - 0x20] = w.bytes;
+      for (const auto& row : rows) assert(row.size() == 49);
+      return rows;
+    };
+    const auto render = [&](GrayscaleMode mode, uint8_t mask, bool factory) {
+      std::fill(msb.begin(), msb.end(), mask);
+      driver.beginGrayscale(bus, bw.data(), mode, RefreshMode::Half, false);
+      driver.copyGrayscaleLsb(bus, lsb.data());
+      driver.copyGrayscaleMsb(bus, msb.data());
+      bus.clear();
+      driver.displayGray(bus, bw.data(), false, nullptr, factory);
+      return bank();
+    };
+    const auto quality = render(GrayscaleMode::Direct, 0, false);
+    assert(quality[2] != quality[3]);
+    assert(render(GrayscaleMode::Absolute, 0, false) == quality);
+
     for (uint8_t mask : {0x00, 0x01, 0x03}) {
       const auto text = render(GrayscaleMode::Overlay, mask, false);
       assert(text != quality);
@@ -514,18 +524,17 @@ static void testUc8279X4WaveformSelection() {
     assert(render(GrayscaleMode::Overlay, 0x01, false) != quality);
   }
   BoardConfig::ACTIVE.displayControllerVariant = 0x68;
-  free(driver._grayBase);
 }
 
 static void testStickyAbsolute() {
   BoardConfig::ACTIVE.board = BoardConfig::Board::Sticky;
-  auto& driver = static_cast<Ssd1677Driver&>(ssd1677Driver());
-  assert(driver._cfg.grayPowerUpFirst);
-  assert(driver._cfg.fullSeqOverride == 0xF7);
+  auto& driver = ssd1677Driver();
+
   assert(driver.grayscaleCapabilities(GrayscaleMode::Absolute).supported());
   FreeInkDisplay display(1, 2, 3, 4, 5, 6);
-  display._driver = &driver;
   display.begin();
+  display._driver = &driver;
+  driver.begin(display._bus);
   const auto bw = frame(33), lsb = frame(14), msb = frame(29);
   std::memcpy(display.getFrameBuffer(), bw.data(), bw.size());
   display._bus.clear();
@@ -534,7 +543,7 @@ static void testStickyAbsolute() {
   display.copyGrayscaleBuffers(lsb.data(), msb.data());
   display.displayGrayBuffer(false);
   assert(lastRegister(display._bus, 0x22) == 0xCC);
-  assert(driver._isScreenOn);
+
   display.cleanupGrayscaleBuffers(bw.data());
   display._bus.clear();
   display.displayBuffer(FreeInkDisplay::FAST_REFRESH);
@@ -544,7 +553,7 @@ static void testStickyAbsolute() {
 
 static void testMetalio() {
   BoardConfig::ACTIVE.board = BoardConfig::Board::MetalioEInk4;
-  auto& driver = static_cast<Ssd1677Driver&>(ssd1677Driver());
+  auto& driver = ssd1677Driver();
   EpdBus bus;
   driver.begin(bus);
   assert(lastRegister(bus, 0x3C) == 0x01);
@@ -570,15 +579,16 @@ static void testMetalio() {
   assert(oldPlanes[0] == Bytes(bw.size(), 0xFF));
   assert(oldPlanes[1] == Bytes(bw.size(), 0x00));
   assert(oldPlanes[2] == bw);
-  assert(!driver._customLutActive);
+
   bus.clear();
   driver.display(bus, bw.data(), nullptr, RefreshMode::Fast, false);
   assert(lastRegister(bus, 0x22) == 0xCC);
   assert(lastRegister(bus, 0x18) == 0x80);
   assert(lastRegister(bus, 0x3C) == 0x80);
   assert(lastRegister(bus, 0x2C) == 0x10);
-  for (const auto& w : bus.writes) if (w.command == 0x21) assert(w.bytes == Bytes({0, 0}));
-  assert(driver._isScreenOn);
+  for (const auto& w : bus.writes)
+    if (w.command == 0x21) assert(w.bytes == Bytes({0, 0}));
+
   bus.clear();
   driver.displayGray(bus, bw.data(), false, nullptr, false);
   // X4 external-LUT AA path: LUT + voltage tail written, border parked at 0xC0,
@@ -586,7 +596,8 @@ static void testMetalio() {
   assert(lastRegister(bus, 0x22) == 0xCC);
   assert(lastRegister(bus, 0x3C) == 0xC0);
   bool lutWritten = false;
-  for (const auto& w : bus.writes) if (w.command == 0x32) lutWritten = true;
+  for (const auto& w : bus.writes)
+    if (w.command == 0x32) lutWritten = true;
   assert(lutWritten);
   // Exit grayscale the way the facade does so the next FAST isn't promoted.
   driver.cleanupGrayscaleBuffers(bus, bw.data());
@@ -595,14 +606,15 @@ static void testMetalio() {
   assert(lastRegister(bus, 0x22) == 0xCF);  // LUT paint, then analog/clock off
   driver.displayFinish(bus, bw.data());
   assert(lastRegister(bus, 0x22) == 0xCF);
-  assert(!driver._isScreenOn);
+
   // Deferred FAST must resync both planes from the frame retained by the facade.
   assert(lastPlane(bus, 0x24) == bw && lastPlane(bus, 0x26) == bw);
   bus.clear();
   driver.displayStart(bus, bw.data(), nullptr, RefreshMode::Half, true);
   assert(bus.waits == 1);  // black pulse done; target waveform still pending
   unsigned pulses = 0;
-  for (const auto& w : bus.writes) if (w.command == 0x20) ++pulses;
+  for (const auto& w : bus.writes)
+    if (w.command == 0x20) ++pulses;
   assert(pulses == 2);
   assert(lastPlane(bus, 0x26) == Bytes(bw.size(), 0));
   driver.displayFinish(bus, bw.data());
@@ -625,19 +637,19 @@ int main(int argc, char** argv) {
   }
   testUc8179GrayShadeSplit();
   testUc8279X4WaveformSelection();
-  testDirectSleep<Uc8179Driver>();
-  testDirectSleep<Uc8279X4Driver>();
-  testUltraChipAbsolute<Uc8179Driver>(true, 0, false);
+  testDirectSleep<TestUc8179>();
+  testDirectSleep<TestUc8279X4>();
+  testUltraChipAbsolute<TestUc8179>(true, 0, false);
   for (uint8_t variant : {0x02, 0x68, 0x69}) {
     BoardConfig::ACTIVE.displayControllerVariant = variant;
-    testUltraChipAbsolute<Uc8279X4Driver>(false, 120, true);
+    testUltraChipAbsolute<TestUc8279X4>(false, 120, true);
   }
   testAbsolutePipeline();
   testCapabilities();
-  testStream<Uc8179Driver>(true,0);
-  testStream<Uc8279X4Driver>(false,120);
+  testStream<TestUc8179>(true, 0);
+  testStream<TestUc8279X4>(false, 120);
   testSsd();
-  testAsyncFrame<Uc8179Driver>();
-  testAsyncFrame<Uc8279X4Driver>();
+  testAsyncFrame<TestUc8179>();
+  testAsyncFrame<TestUc8279X4>();
   std::puts("Pro plane bytes, transaction counts, clean refreshes, power state and async frame ownership passed");
 }

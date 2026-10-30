@@ -1,14 +1,18 @@
 #include <cassert>
 #include <iostream>
 #include <vector>
-#include "driver/Uc8279Driver.h"
-#include "lut/Uc8279X3Luts.h"
+
+#include "RustPanels.h"
+#include "golden_luts/Uc8279X3Luts.h"
+#include "src/driver/Uc8279Driver.h"
 
 int main() {
   using namespace freeink;
+  BoardConfig::ACTIVE.displayWidth = 792;
+  BoardConfig::ACTIVE.displayHeight = 528;
   constexpr size_t n = 792 / 8 * 528;
   EpdBus bus;
-  Uc8279Driver driver;
+  TestUc8279 driver;
   std::vector<uint8_t> bw(n, 0x88), lsb(n, 0xAA), msb(n, 0xCC);
   assert(driver.grayscaleCapabilities(GrayscaleMode::Absolute).supported());
   assert(driver.grayscaleCapabilities().stripUploads && !driver.grayscaleCapabilities().asyncBase);
@@ -33,7 +37,7 @@ int main() {
     driver.cleanupGrayscaleBuffers(bus, bw.data());
     driver.display(bus, bw.data(), nullptr, RefreshMode::Fast, true);
     assert(bus.oldPlane == bw && bus.newPlane == bw);
-    assert(bus.lastBwBank == std::vector<uint8_t>(kUc8279X3_BwGc[0]+1, kUc8279X3_BwGc[0]+43));
+    assert(bus.lastBwBank == std::vector<uint8_t>(kUc8279X3_BwGc[0] + 1, kUc8279X3_BwGc[0] + 43));
   }
   for (auto fallback : {RefreshMode::Half, RefreshMode::Fast}) {
     const auto before = bus.refreshes;

@@ -1,8 +1,5 @@
 #pragma once
 #if defined(XP_STRIP_RENDER) && XP_STRIP_RENDER
-#if !defined(FREEINK_RUST_PANEL) || !FREEINK_RUST_PANEL
-#error XP_STRIP_RENDER requires FREEINK_RUST_PANEL
-#endif
 #include <xp_display.h>
 #endif
 

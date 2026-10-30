@@ -12,6 +12,7 @@
 // the firmware just calls the generic EInkDisplay API and gets device behavior.
 
 #include "PanelDriver.h"
+#include "Ssd1677Probe.h"
 
 namespace freeink {
 
@@ -59,7 +60,7 @@ struct Ssd1677Config {
   bool overlayGrayscale = true;
   bool writeSecondUpdateControlByte = false;  // append zero to CMD 0x21
   bool restoreInternalTemperature = false;    // CMD 0x18=0x80 after warmed HALF
-  bool blackPulseClean = false;  // HALF: two partials old -> black -> new (Metalio demo)
+  bool blackPulseClean = false;               // HALF: two partials old -> black -> new (Metalio demo)
   // Factory absolute 4-level LUT override; nullptr selects lut_factory_quality.
   // Boards with a per-module voltage tail (Metalio) point this at their copy.
   const unsigned char* factoryGrayLut = nullptr;
@@ -78,113 +79,6 @@ struct Ssd1677Config {
 // uniformly. -DFREEINK_DISPLAY_FLIPPED is an alias for mirrorY.
 const Ssd1677Config& ssd1677DefaultConfig();
 
-class Ssd1677Driver : public PanelDriver {
- public:
-  explicit Ssd1677Driver(const Ssd1677Config& cfg = ssd1677DefaultConfig());
-
-  uint32_t spiHz() const override;
-  BusyPolarity busyPolarity() const override { return BusyPolarity::ActiveHigh; }
-  PanelGeometry geometry() const override;
-
-  void begin(EpdBus& bus) override;
-  void deepSleep(EpdBus& bus) override;
-
-  void display(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode, bool turnOff) override;
-  // Deferred refresh: displayStart() runs the full update (RAM writes,
-  // MASTER_ACTIVATION) and returns while the waveform runs; displayFinish()
-  // sleeps out the remainder on the BUSY completion edge. No post-waveform
-  // host-frame work on X4 (RED handling is inside displayImpl's async path).
-  bool displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode, bool turnOff) override;
-  void displayFinish(EpdBus& bus, const uint8_t* fb) override;
-  bool supportsAsyncDisplay() const override { return true; }
-  void displayWindow(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, uint16_t x, uint16_t y, uint16_t w,
-                     uint16_t h, bool turnOff) override;
-
-  void requestResync(uint8_t) override { _needsGrayClear = true; _absoluteInput = false; }
-  void beginGrayscale(EpdBus& bus, const uint8_t* fb, GrayscaleMode mode, RefreshMode fallback, bool turnOff) override;
-
-  void seedPreviousFrame(EpdBus& bus, const uint8_t* buf) override;
-
-  GrayscaleCapabilities grayscaleCapabilities(GrayscaleMode mode = GrayscaleMode::Overlay) const override {
-    if (mode == GrayscaleMode::Absolute && _cfg.absoluteGrayscale)
-      return {GrayscaleEncoding::AbsolutePlanes, GrayscaleBase::Combined, true, false, false};
-    if (mode != GrayscaleMode::Overlay || !_cfg.overlayGrayscale) return {};
-    return {GrayscaleEncoding::OverlayMasks, GrayscaleBase::Separate, true, true, false};
-  }
-  void copyGrayscaleLsb(EpdBus& bus, const uint8_t* lsb) override;
-  void copyGrayscaleMsb(EpdBus& bus, const uint8_t* msb) override;
-  void writeGrayscalePlaneStrip(EpdBus& bus, GrayPlane plane, const uint8_t* rows, uint16_t yStart,
-                                uint16_t numRows) override;
-  void displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, const unsigned char* lut, bool factoryMode) override;
-  void cleanupGrayscaleBuffers(EpdBus& bus, const uint8_t* bw) override;
-
-  // No grayscaleRevert override. Grayscale exits via cleanupGrayscaleBuffers
-  // (RED resync) or a promoted single-pass HALF clean in displayImpl/displayWindow.
-  // Stock 7.4.4 has a dedicated grey_revert waveform, but it is not yet ported.
-  void setCustomLut(EpdBus& bus, bool enabled, const unsigned char* data) override;
-
- private:
-  bool _pendingFrameSync = false;
-  bool _needsGrayClear = false;
-  bool _absoluteInput = false;
-  void writeGrayRam(EpdBus& bus, uint8_t command, const uint8_t* data, uint16_t len);
-  void initController(EpdBus& bus);
-  void setRamArea(EpdBus& bus, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
-  void writeRam(EpdBus& bus, uint8_t ramCmd, const uint8_t* data, uint32_t size);
-  // async: fire MASTER_ACTIVATION and return without waiting on BUSY.
-  void refresh(EpdBus& bus, RefreshMode mode, bool turnOff, bool async = false);
-  // Blocking CLOCK_ON|ANALOG_ON activation; no-op when already powered.
-  void powerOn(EpdBus& bus);
-  // Documented SSD1677 analog/oscillator shutdown. Used after a 0xFC update
-  // when turnOff was requested and by deepSleep().
-  void powerOffController(EpdBus& bus);
-  void displayImpl(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode, bool turnOff, bool async);
-
-  const Ssd1677Config& _cfg;
-
-  uint16_t _w;
-  uint16_t _h;
-  uint16_t _wb;
-  uint32_t _bufferSize;
-
-  // Panel mount transform from BoardProfile.orientation (mirrorX via RAM column
-  // addressing in setRamArea, mirrorY via the gate-scan direction). 180° = both.
-  bool _mirrorX = false;
-  bool _mirrorY = false;
-
-  bool _isScreenOn = false;
-  bool _inGrayscaleMode = false;
-  bool _customLutActive = false;
-  // Async 0xFC updates cannot issue the separate power-off activation until the
-  // display waveform completes; displayFinish() consumes this flag.
-  bool _pendingPowerOff = false;
-  // First paint after begin() (boot or deep-sleep wake) must be a full refresh to
-  // clear whatever is physically on the panel (e.g. the black boot screen) and set
-  // a clean differential baseline. Only armed for boards whose self-powering fast
-  // sequence makes _isScreenOn useless as a cold-start signal (fullSeqOverride set).
-  bool _needsInitialFull = false;
-};
-
-// Singleton accessor (Meyers, zero-heap). Selects the config for the active board.
 PanelDriver& ssd1677Driver();
-
-#if FREEINK_DEVICE_PICCO
-// Onyx Picco panel probe (cached): reads the panel ID over the display pins
-// before the SPI bus starts and records it in ACTIVE.displayControllerVariant.
-enum PiccoPanel : uint8_t {
-  PiccoUnknown = 0,
-  PiccoYrd0426 = 1,
-  PiccoDepg0397 = 2,
-  PiccoOpm040b3 = 3,
-  PiccoSe0400nqw47 = 4,  // the stock "SSD2677" driver path (Ssd2677Driver)
-};
-uint8_t piccoProbePanel();
-#endif
-
-#if FREEINK_DEVICE_STICKY
-// Sticky panel probe (cached): true when the unit carries an SSD2677 instead of
-// the SSD1677 (CMD 0x70 answers 0x07).
-bool stickyHasSsd2677();
-#endif
 
 }  // namespace freeink

@@ -5,10 +5,10 @@
 #include <cstring>
 #include <vector>
 #define private public
+#include "golden_luts/Ssd1677Luts.h"
+#include "golden_luts/Ssd2677Luts.h"
 #include "src/driver/Ssd1677Driver.h"
 #include "src/driver/Ssd2677Driver.h"
-#include "src/lut/Ssd2677Luts.h"
-#include "src/lut/Ssd1677Luts.h"
 #undef private
 
 using namespace freeink;
@@ -27,7 +27,7 @@ static const Bytes* lastLut(const EpdBus& bus) {
   return nullptr;
 }
 
-static void expectRefresh(Ssd1677Driver& d, RefreshMode mode, uint8_t ctrl2, const unsigned char* lut) {
+static void expectRefresh(PanelDriver& d, RefreshMode mode, uint8_t ctrl2, const unsigned char* lut) {
   EpdBus bus;
   const Bytes fb(48000, 0xAA);
   d.display(bus, fb.data(), fb.data(), mode, false);
@@ -39,15 +39,14 @@ static void expectRefresh(Ssd1677Driver& d, RefreshMode mode, uint8_t ctrl2, con
   } else {
     assert(!sent);
   }
-  assert(!d._customLutActive);
 }
 
 // AA follows the Sticky overlay path (its LUT + voltages, border parked at VCOM,
 // power-up first, 0xCC). Absolute uses the default X4 factory LUT.
-static void expectStickyGray(Ssd1677Driver& d) {
+static void expectStickyGray(PanelDriver& d) {
   const unsigned char* lut = lut_grayscale_sticky;
   assert(d.grayscaleCapabilities(GrayscaleMode::Overlay).supported());
-  assert(d.grayscaleCapabilities(GrayscaleMode::Absolute).supported() && d._cfg.factoryGrayLut == nullptr);
+  assert(d.grayscaleCapabilities(GrayscaleMode::Absolute).supported());
   EpdBus bus;
   const Bytes fb(48000, 0xFF);
   d.displayGray(bus, fb.data(), false, nullptr, false);
@@ -55,7 +54,7 @@ static void expectStickyGray(Ssd1677Driver& d) {
   assert(sent && *sent == Bytes(lut, lut + 105));
   assert(lastRegister(bus, 0x2C) == lut[109] && lastRegister(bus, 0x3C) == 0x80);
   assert(lastRegister(bus, 0x22) == 0xCC);
-  assert(!d._customLutActive);
+
   bus.clear();
   d.displayGray(bus, fb.data(), false, nullptr, true);
   const Bytes* factory = lastLut(bus);
@@ -69,7 +68,10 @@ int main(int argc, char** argv) {
   static const uint8_t depg[10] = {0xCA, 0xFE, 0x00, 0x16, 0x77, 0x00, 0x08, 0x01, 0x00, 0x4E};
   static const uint8_t opm[10] = {'W', '0', '4', '0', 'B', '3', 0, 0, 0, 0};
   static const uint8_t none[10] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-  const uint8_t* id = !strcmp(which, "depg") ? depg : !strcmp(which, "opm") ? opm : !strcmp(which, "unknown") ? none : yrd;
+  const uint8_t* id = !strcmp(which, "depg")      ? depg
+                      : !strcmp(which, "opm")     ? opm
+                      : !strcmp(which, "unknown") ? none
+                                                  : yrd;
   memcpy(fakePanelId, id, 10);
   if (!strcmp(which, "se0400")) {
     static const uint8_t rev[3] = {0x07, 0x01, 0x01};
@@ -86,16 +88,19 @@ int main(int argc, char** argv) {
     s.display(bus, newFb.data(), oldFb.data(), RefreshMode::Fast, false);
     // First paint is forced FULL; data is old(hi)/new(lo) pairs, MSB first.
     const Bytes* data = nullptr;
-    for (const auto& w : bus.writes) if (w.command == 0x10) data = &w.bytes;
+    for (const auto& w : bus.writes)
+      if (w.command == 0x10) data = &w.bytes;
     assert(data && data->size() == 96000);
     assert((*data)[0] == 0xAA && (*data)[1] == 0xFF);  // (1,0)x4 then (1,1)x4
     const Bytes* lut = nullptr;
-    for (const auto& w : bus.writes) if (w.command == 0x20) lut = &w.bytes;
+    for (const auto& w : bus.writes)
+      if (w.command == 0x20) lut = &w.bytes;
     assert(lut && *lut == Bytes(lut_picco_se0400_full, lut_picco_se0400_full + 535));
     assert(lastRegister(bus, 0x12) == 0x00);
     bus.clear();
     s.display(bus, newFb.data(), oldFb.data(), RefreshMode::Fast, true);
-    for (const auto& w : bus.writes) if (w.command == 0x20) lut = &w.bytes;
+    for (const auto& w : bus.writes)
+      if (w.command == 0x20) lut = &w.bytes;
     assert(*lut == Bytes(lut_picco_se0400_fast, lut_picco_se0400_fast + 535));
     assert(lastRegister(bus, 0x02) == 0x00);
 
@@ -113,7 +118,8 @@ int main(int argc, char** argv) {
     bus.clear();
     s.display(bus, white.data(), nullptr, RefreshMode::Fast, false);  // old must = retained black
     data = nullptr;
-    for (const auto& w : bus.writes) if (w.command == 0x10) data = &w.bytes;
+    for (const auto& w : bus.writes)
+      if (w.command == 0x10) data = &w.bytes;
     assert(data && data->size() == 96000);
     assert((*data)[0] == 0x55 && (*data)[100] == 0x55 && (*data)[95999] == 0x55);
     // Overlay AA: LSB mask -> low bit, MSB mask -> high bit, slot-5 LUT.
@@ -126,11 +132,13 @@ int main(int argc, char** argv) {
     s.copyGrayscaleLsb(bus, lsb.data());
     s.copyGrayscaleMsb(bus, msb.data());
     const Bytes* g = nullptr;
-    for (const auto& w : bus.writes) if (w.command == 0x10) g = &w.bytes;
+    for (const auto& w : bus.writes)
+      if (w.command == 0x10) g = &w.bytes;
     // px: (msb,lsb) = 11 11 01 01 | 10 10 00 00
     assert(g && g->size() == 96000 && (*g)[0] == 0xF5 && (*g)[1] == 0xA0);
     s.displayGray(bus, newFb.data(), false, nullptr, false);
-    for (const auto& w : bus.writes) if (w.command == 0x20) lut = &w.bytes;
+    for (const auto& w : bus.writes)
+      if (w.command == 0x20) lut = &w.bytes;
     assert(*lut == Bytes(lut_picco_se0400_gray, lut_picco_se0400_gray + 535));
     s.deepSleep(bus);
     assert(lastRegister(bus, 0x07) == 0xA5);
@@ -138,7 +146,7 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  auto& d = static_cast<Ssd1677Driver&>(ssd1677Driver());
+  auto& d = ssd1677Driver();
   // Sleep latches the display pins; the probe must release them before driving RESET.
   assert(fakeHoldReleased[BoardConfig::ACTIVE.display.rst]);
   // The probe issued Read User ID; an unrecognized ID goes on to CMD 0x70.
@@ -162,7 +170,9 @@ int main(int argc, char** argv) {
     expectStickyGray(d);
   } else {
     assert(variant == 0);
-    assert(d._cfg.fullLut == nullptr && d._cfg.fastLut == nullptr && d._cfg.grayLut == lut_grayscale_sticky);
+    expectRefresh(d, RefreshMode::Full, 0xF7, nullptr);
+    expectRefresh(d, RefreshMode::Fast, 0xFF, nullptr);
+    expectStickyGray(d);
   }
   std::printf("Picco %s: probe, config and refresh sequences passed\n", which);
   return 0;

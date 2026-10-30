@@ -1,5 +1,4 @@
 #pragma once
-#if defined(FREEINK_RUST_PANEL) && FREEINK_RUST_PANEL
 #include <xp_display.h>
 
 #include "PanelDriver.h"
@@ -68,7 +67,6 @@ class RustPanelDriver : public PanelDriver {
   uint16_t height_ = 0;
   uint8_t controller_ = 0;
 };
-PanelDriver& rustUc8253X3Driver();
-PanelDriver& rustSsd1677Driver();
+PanelDriver& uc8253X3Driver();
+PanelDriver& ssd1677Driver();
 }  // namespace freeink
-#endif
