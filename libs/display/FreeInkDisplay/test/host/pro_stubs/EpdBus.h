@@ -1,9 +1,13 @@
 #pragma once
+#include <Arduino.h>
+
 #include <cassert>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <vector>
 namespace freeink {
-enum class BusyPolarity { ActiveHigh, ActiveLow, X3TwoPhase, UcIdleHigh };
+enum class BusyPolarity : uint8_t { ActiveHigh, ActiveLow, X3TwoPhase, UcIdleHigh, ActiveLowReady };
 struct EpdPins {
   int8_t sclk, mosi, cs, dc, rst, busy, powerEnable = -1;
 };
@@ -13,6 +17,7 @@ class EpdBus {
     uint8_t command;
     std::vector<uint8_t> bytes;
     unsigned transactions = 0;
+    unsigned long elapsedMs = fakeDelayMs;
   };
   class Transaction {
    public:
@@ -51,6 +56,11 @@ class EpdBus {
     EpdBus* _bus;
   };
   std::vector<Write> writes;
+  std::vector<size_t> busyWaitWriteCounts;
+  std::vector<size_t> refreshWaitWriteCounts;
+  std::vector<unsigned long> busyWaitElapsedMs;
+  std::vector<unsigned long> refreshWaitElapsedMs;
+  std::vector<BusyPolarity> busyWaitPolarities;
   bool transaction = false;
   unsigned waits = 0, refreshes = 0, powerOns = 0;
   uint8_t interval = 0;
@@ -77,10 +87,17 @@ class EpdBus {
         (rawRegisters.empty() || rawRegisters.back() != w.command))
       rawRegisters.push_back(w.command);
   }
+  ~EpdBus() { recordTrace(); }
   void clear() {
     assert(!transaction);
+    recordTrace();
     writes.clear();
     waits = 0;
+    busyWaitWriteCounts.clear();
+    busyWaitPolarities.clear();
+    refreshWaitWriteCounts.clear();
+    busyWaitElapsedMs.clear();
+    refreshWaitElapsedMs.clear();
   }
   void begin(const EpdPins&, uint32_t, BusyPolarity, int8_t = -1, int8_t = -1) {}
   void cmd(uint8_t c) {
@@ -117,18 +134,44 @@ class EpdBus {
     data(p, n);
   }
   void reset(uint16_t = 0) {}
-  void waitBusy(BusyPolarity, const char* tag) { waitBusy(tag); }
+  void waitBusy(BusyPolarity polarity, const char* tag) {
+    busyWaitPolarities.push_back(polarity);
+    waitBusy(tag);
+  }
   void waitBusy(const char* = nullptr) {
     assert(!transaction);
+    busyWaitWriteCounts.push_back(writes.size());
+    busyWaitElapsedMs.push_back(fakeDelayMs);
     ++waits;
   }
   void waitRefreshComplete(const char* = nullptr) {
     assert(!transaction);
+    refreshWaitWriteCounts.push_back(writes.size());
+    refreshWaitElapsedMs.push_back(fakeDelayMs);
     ++waits;
   }
   bool isBusy() const { return false; }
   EpdPins pins() const { return {}; }
   void setBusyWaitHooks(void (*)(), void (*)()) {}
   void setBusyWaitSliceHook(bool (*)(int8_t, uint8_t)) {}
+
+ private:
+  static void traceLength(std::FILE* file, uint64_t size) {
+    for (unsigned byte = 0; byte < 8; ++byte) std::fputc((size >> (byte * 8)) & 0xff, file);
+  }
+  void recordTrace() const {
+    const char* path = std::getenv("FREEINK_RECORD_TRACE");
+    if (!path) return;
+    auto* file = std::fopen(path, "ab");
+    assert(file);
+    // Each batch begins with a LE u64 count, then command/u64 length/data records.
+    traceLength(file, writes.size());
+    for (const auto& write : writes) {
+      std::fputc(write.command, file);
+      traceLength(file, write.bytes.size());
+      if (!write.bytes.empty()) std::fwrite(write.bytes.data(), 1, write.bytes.size(), file);
+    }
+    std::fclose(file);
+  }
 };
 }  // namespace freeink

@@ -44,7 +44,15 @@ static Bytes frame(unsigned seed) {
 static void testUc8279X4Window() {
   TestUc8279X4 driver;
   EpdBus bus;
-  const auto first = frame(3), next = frame(89);
+  const auto first = frame(3);
+  auto next = first;
+  for (size_t y = 154; y < 172; ++y)
+    for (size_t x = 33; x < 36; ++x) next[y * 100 + x] ^= 0xff;
+  const auto padded = [](const Bytes& frame) {
+    Bytes bytes(12000, 0xff);
+    bytes.insert(bytes.end(), frame.begin(), frame.end());
+    return bytes;
+  };
   const Bytes regional{0x01, 0x08, 0x01, 0x1f, 0x01, 0x12, 0x01, 0x23, 0x01};
   const Bytes whole{0x00, 0x00, 0x03, 0x1f, 0x00, 0x78, 0x02, 0x57, 0x01};
   const auto checkRegion = [&](const Bytes& expected) {
@@ -62,6 +70,9 @@ static void testUc8279X4Window() {
   checkRegion({});  // Cold start must establish OLD with a full refresh.
 
   bus.clear();
+  const auto warm = fakeDelayMs;
+  const auto warmPolls = fakeOneMsDelays;
+  fakeBusyHighSamples = 2;
   driver.displayWindow(bus, next.data(), nullptr, 264, 154, 24, 18, true);
   checkRegion(regional);
   // Upstream 5e94fe74: full NEW, regional DRF, full OLD, then analog power-off.
@@ -71,12 +82,36 @@ static void testUc8279X4Window() {
   assert(bus.writes[1].bytes == Bytes({0xd7}) && bus.writes[2].bytes == Bytes({0x02}));
   assert(bus.writes[3].bytes == Bytes({0x5a}) && bus.writes[4].bytes == Bytes({0x20}));
   assert(bus.writes[5].bytes == Bytes({0x02}) && bus.writes[8].bytes == Bytes({0x17, 0x4d}));
-  Bytes padded(12000, 0xff);
-  padded.insert(padded.end(), next.begin(), next.end());
-  assert(bus.newAtRefresh == padded && bus.oldPlane == padded && bus.waits == 2);
-  padded.assign(12000, 0xff);
-  padded.insert(padded.end(), first.begin(), first.end());
-  assert(bus.oldAtRefresh == padded);
+  assert(bus.refreshWaitWriteCounts == std::vector<size_t>{10});
+  assert(bus.refreshWaitElapsedMs == std::vector<unsigned long>{warm + 2});
+  assert(bus.busyWaitWriteCounts == std::vector<size_t>{13});
+  assert(bus.writes[9].elapsedMs == warm && bus.writes[10].elapsedMs == warm + 2);
+  assert(fakeOneMsDelays == warmPolls + 2 && fakeBusyHighSamples == 0);
+  assert(bus.newAtRefresh == padded(next) && bus.oldPlane == padded(next));
+  assert(bus.oldAtRefresh == padded(first));
+
+  // Follow with one byte at the bottom right. The previous region still describes the glass.
+  const auto prior = next;
+  next.back() ^= 0xff;
+  bus.clear();
+  const auto cold = fakeDelayMs;
+  const auto coldPolls = fakeOneMsDelays;
+  fakeBusyHighSamples = 2;
+  driver.displayWindow(bus, next.data(), nullptr, 792, 479, 8, 1, false);
+  checkRegion(Bytes({0x03, 0x18, 0x03, 0x1f, 0x02, 0x57, 0x02, 0x57, 0x01}));
+  assert(bus.busyWaitWriteCounts == std::vector<size_t>{7});
+  assert(bus.busyWaitElapsedMs == std::vector<unsigned long>{cold});
+  assert(bus.writes[6].command == 0x04 && bus.writes[7].command == 0x91);
+  assert(bus.refreshWaitWriteCounts == std::vector<size_t>{11});
+  assert(bus.refreshWaitElapsedMs == std::vector<unsigned long>{cold + 2});
+  assert(bus.writes[10].command == 0x12 && bus.writes[10].elapsedMs == cold);
+  assert(bus.writes[11].command == 0x92 && bus.writes[11].elapsedMs == cold + 2);
+  assert(fakeOneMsDelays == coldPolls + 2 && fakeBusyHighSamples == 0);
+  assert(bus.oldAtRefresh == padded(prior) && bus.newAtRefresh == padded(next) && bus.oldPlane == padded(next));
+
+  bus.clear();
+  driver.displayWindow(bus, next.data(), nullptr, 0, 0, 800, 480, false);
+  checkRegion(whole);
 
   for (const auto& xw : {std::pair{265, 24}, std::pair{264, 25}, std::pair{792, 16}, std::pair{65528, 24},
                          std::pair{264, 0}}) {
@@ -98,13 +133,21 @@ static void testUc8279X4Window() {
   bus.clear();
   driver.displayWindow(bus, next.data(), nullptr, 264, 154, 24, 18, false);
   checkRegion(whole);  // Post-gray re-drive must reach the whole panel.
+  commands.clear();
+  for (const auto& write : bus.writes) commands.push_back(write.command);
+  assert(commands == Bytes({0x13, 0x91, 0x90, 0x00, 0x03, 0xe1, 0x50, 0xe0, 0xe5,
+                            0x20, 0x21, 0x22, 0x23, 0x24, 0x12, 0x92, 0x10}));
+  assert(bus.writes[3].bytes == Bytes({0x37, 0x4d}));  // REG LUTs, not OTP DU.
+  assert(bus.busyWaitWriteCounts == std::vector<size_t>({0, 1, 15}));
+  assert(bus.refreshWaitWriteCounts.empty());
+  assert(bus.oldAtRefresh == padded(next) && bus.newAtRefresh == padded(next) && bus.oldPlane == padded(next));
 
   driver.requestResync(0);
   bus.clear();
   driver.displayWindow(bus, next.data(), nullptr, 264, 154, 24, 18, false);
   checkRegion({});
   bus.clear();
-  driver.displayWindow(bus, first.data(), nullptr, 264, 154, 24, 18, false);
+  driver.displayWindow(bus, next.data(), nullptr, 264, 154, 24, 18, false);
   checkRegion(regional);
   bus.clear();
   driver.display(bus, next.data(), nullptr, RefreshMode::Fast, false);
@@ -738,6 +781,10 @@ static void testMetalio() {
 }
 
 int main(int argc, char** argv) {
+  if (argc > 1 && std::strcmp(argv[1], "window") == 0) {
+    testUc8279X4Window();
+    return 0;
+  }
   if (argc > 1 && std::strcmp(argv[1], "metalio") == 0) {
     testMetalio();
     std::puts("Metalio refresh, temperature, grayscale fallback and async power-down passed");
@@ -749,7 +796,6 @@ int main(int argc, char** argv) {
     return 0;
   }
   testUc8179GrayShadeSplit();
-  testUc8279X4Window();
   testUc8279X4WaveformSelection();
   testDirectSleep<TestUc8179>();
   testDirectSleep<TestUc8279X4>();

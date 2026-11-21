@@ -1,4 +1,5 @@
 """Build SDK host tests against the consumer's Rust archive and SDK adapter."""
+from hashlib import sha256
 from pathlib import Path
 import os
 import shutil
@@ -7,6 +8,14 @@ import subprocess
 HERE = Path(__file__).resolve().parent
 LIB = HERE.parents[1]
 READER = Path(os.environ.get('FREEINK_READER_ROOT', HERE.parents[5])).resolve()
+
+
+def check_trace(path, size, digest):
+    data = path.read_bytes()
+    actual = (len(data), sha256(data).hexdigest())
+    if actual != (size, digest):
+        raise AssertionError(f'{path.name}: upstream trace expected {(size, digest)}, got {actual}')
+    print(f'{path.name}: upstream trace matched ({size} bytes, SHA-256 {digest})')
 
 
 def prepare(root):
