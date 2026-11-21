@@ -65,14 +65,13 @@ Gray3 history: the next page shows its base with a normal B/W refresh, which
 fully clears the previous screen, and its grays follow as a Gray3 transition
 from that base.
 
-Full images use the four-gray waveform without a B/W base pass. The Rust
-backend sends MSB to DTM1 and LSB to DTM2, with black/dark/light/white encoded
-as 00/01/10/11. It uses VCOM_DC 0x24 in B/W and 0x32 in grayscale, seeds DTM1
-white before power-on, and powers down after refresh when requested.
-
-The upstream four-gray pre-clear, revised B/W VCOM and unconditional power-off
-need corresponding changes in the Rust backend. See `96672ab`, `a5d5332`,
-`8e057e3`, `8ae8191`, `ae5198d` and `00a9e11` for the upstream sequence.
+The Rust backend pre-clears four-gray images with two black passes using the
+half-count full waveform. It then starts a grayscale session and sends MSB to
+DTM1 and LSB to DTM2, with black/dark/light/white encoded as 00/01/10/11.
+The B/W session uses VCOM_DC 0x26 and the grayscale sessions use 0x32. DTM1
+is seeded white before the controller first powers on and again after the
+four-gray image refresh. Each refresh powers off, with the two pre-clear
+passes sharing one power-on interval.
 
 ## SDK integration
 

@@ -1,10 +1,19 @@
 #include <BoardConfig.h>
 
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <vector>
 
 #include "src/driver/Uc8279cA4Driver.h"
+
+using Bytes = std::vector<uint8_t>;
+
+static Bytes commands(const freeink::EpdBus& bus) {
+  Bytes result;
+  for (const auto& w : bus.writes) result.push_back(w.command);
+  return result;
+}
 
 int main() {
   using namespace freeink;
@@ -15,11 +24,21 @@ int main() {
   EpdBus bus;
   auto& driver = uc8279cA4Driver();
   driver.begin(bus);
+  assert(commands(bus) == Bytes({0, 3, 1, 6, 0x82, 0x30, 0x61, 0x65, 0xe1, 0x10, 4}));
+  assert(bus.writes[2].bytes == Bytes({0x43, 0, 0x78, 0x78, 0x17}));
+  assert(bus.writes[4].bytes == Bytes({0x26}) && bus.writes[9].bytes == Bytes(600 * 96, 0xff));
+  assert(bus.busyWaitWriteCounts == std::vector<size_t>({11}) && fakeDelayMs == 130);
 
   // A real reader AA turn: base -> gray masks -> restore base -> different page.
   // The target differs from both the old base and the gray selector planes.
   for (size_t i = 0; i < bytes; ++i) bw[i] = static_cast<uint8_t>(i * 37);
+  bus.clear();
   driver.display(bus, bw.data(), nullptr, RefreshMode::Full, false);
+  assert(commands(bus) == Bytes({0x50, 0x20, 0x21, 0x22, 0x23, 0x24,
+                                 0x10, 0x13, 0x12, 2, 0x10, 0x13, 4, 0x12, 0x10, 2}));
+  assert(bus.busyWaitWriteCounts == std::vector<size_t>({9, 10, 13, 14, 16}));
+  Bytes fullLuts[5];
+  for (size_t i = 0; i < 5; ++i) fullLuts[i] = bus.writes[i + 1].bytes;
   driver.copyGrayscaleLsb(bus, gray.data());
   driver.copyGrayscaleMsb(bus, gray.data());
   driver.displayGray(bus, bw.data(), false, nullptr, false);
@@ -84,7 +103,7 @@ int main() {
   }
 
   // Absolute planes go out as the stock firmware sends them: MSB -> DTM1,
-  // LSB -> DTM2, uninverted, with no B/W base refresh before the gray pass.
+  // LSB -> DTM2, uninverted, after the two-pass black pre-clear.
   {
     std::vector<uint8_t> lsb(bytes), msb(bytes);
     for (size_t i = 0; i < bytes; ++i) {
@@ -92,11 +111,37 @@ int main() {
       msb[i] = static_cast<uint8_t>(i * 29 + 7);
     }
     const auto before = bus.refreshes;
+    bus.clear();
+    fakeDelayMs = 0;
     driver.beginGrayscale(bus, bw.data(), GrayscaleMode::Direct, RefreshMode::Half, false);
     driver.copyGrayscaleLsb(bus, lsb.data());
     driver.copyGrayscaleMsb(bus, msb.data());
+    assert(bus.writes.empty());
     driver.displayGray(bus, bw.data(), false, nullptr, true);
-    assert(bus.refreshes == before + 1 && "absolute gray must not refresh a B/W base first");
+    assert(bus.refreshes == before + 3);
+    assert(commands(bus) == Bytes({4, 0x50, 0x20, 0x21, 0x22, 0x23, 0x24, 0x13, 0x12, 0x12, 2,
+                                   0, 3, 1, 6, 0x82, 0x30, 0x61, 0x65, 0xe1, 0x10, 4,
+                                   0x10, 0x13, 0x20, 0x21, 0x22, 0x23, 0x24, 0x12, 0x10, 2}));
+    assert(bus.busyWaitWriteCounts == std::vector<size_t>({1, 9, 10, 11, 22, 30, 32}));
+    assert(fakeDelayMs == 130);
+    assert(bus.writes[1].bytes == Bytes({0x97}) && bus.writes[7].bytes == Bytes(600 * 96, 0));
+    const Bytes half20 = {1, 0x0c, 2, 7, 5, 1, 1, 1, 5, 0, 0, 0, 1, 1, 1};
+    assert(bus.writes[2].bytes.size() == 49);
+    assert(std::equal(half20.begin(), half20.end(), bus.writes[2].bytes.begin()));
+    for (size_t i = 0; i < 5; ++i) {
+      auto expected = fullLuts[i];
+      for (size_t group = 0; group < expected.size(); group += 7) {
+        for (size_t byte = 1; byte <= 4; ++byte) {
+          const auto value = expected[group + byte];
+          expected[group + byte] = (value & 0xc0) | (((value & 0x3f) + 1) >> 1);
+        }
+      }
+      assert(bus.writes[2 + i].bytes == expected);
+      assert(bus.writes[24 + i].bytes.size() == 42);
+    }
+    assert(bus.writes[13].bytes == Bytes({3, 0, 0x72, 0x72}) && bus.writes[15].bytes == Bytes({0x32}));
+    assert(bus.writes[20].bytes == Bytes(600 * 96, 0xff) && bus.oldPlane == Bytes(600 * 96, 0xff));
+    assert(bus.writes[25].bytes[15] == 0x86 && bus.writes[25].bytes[17] == 0x86);
     for (size_t i = 0; i < bytes; ++i) {
       const auto physical = (551 - i / 96) * 96 + i % 96;
       assert(bus.oldAtRefresh[physical] == msb[i] && bus.newAtRefresh[physical] == lsb[i]);
@@ -158,8 +203,12 @@ int main() {
   {
     // A cleanup request runs stock's inverted page first, then the page.
     const auto before = bus.refreshes;
+    bus.clear();
     gray3Page(page.data(), RefreshMode::Half);
     assert(bus.refreshes == before + 2 && "cleanup page must show the inverted page, then the page");
+    assert(commands(bus) == Bytes({4, 0x10, 0x13, 0x50, 0x20, 0x21, 0x22, 0x23, 0x24, 0x12, 2,
+                                   4, 0x10, 0x13, 0x50, 0x20, 0x21, 0x22, 0x23, 0x24, 0x12, 2}));
+    assert(bus.busyWaitWriteCounts == std::vector<size_t>({1, 10, 11, 12, 21, 22}));
   }
   {
     // A stashed base whose gray pass never runs still reaches the panel.
