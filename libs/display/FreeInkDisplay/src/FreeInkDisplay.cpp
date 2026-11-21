@@ -250,6 +250,8 @@ void FreeInkDisplay::selectDriver() {
   if (_driver) _driver->setBackgroundHint(_inverted);
 }
 
+const char* FreeInkDisplay::getControllerName() const { return _driver ? _driver->controllerName() : nullptr; }
+
 void FreeInkDisplay::begin() {
   cancelGrayscalePass();
   DisplayPmLock pmLock;
@@ -520,6 +522,8 @@ void FreeInkDisplay::returnBuildStorage() {
 // is PSRAM-first with a malloc fallback, so this is correct with or without PSRAM.
 bool FreeInkDisplay::releaseSecondaryBuffer() {
   if (!frameBufferActive) return false;
+  // Finish any refresh that still needs the displayed frame for controller RAM sync.
+  syncPendingAsync();
   if (frameBufferActive == frameBuffer0) {
     free(frameBuffer0);
     frameBuffer0 = nullptr;
@@ -1035,12 +1039,15 @@ void FreeInkDisplay::cleanupGrayscaleBuffers(const uint8_t* bwBuffer) {
 #ifndef EINK_DISPLAY_SINGLE_BUFFER_MODE
 void FreeInkDisplay::cleanupGrayscaleWithPreviousBuffer() {
   cancelGrayscalePass();
-  const uint8_t* baseline = frameBufferActive ? frameBufferActive : frameBuffer;
+  // The grayscale pass uses frameBuffer as plane scratch. A missing displayed
+  // frame must reach the driver as nullptr so it can invalidate its baseline.
+  const uint8_t* baseline = frameBufferActive;
   if (!_inverted) {
     DisplayPmLock pmLock;
     _driver->cleanupGrayscaleBuffers(_bus, baseline);
   }
-  if (frameBuffer && baseline && frameBuffer != baseline) memcpy(frameBuffer, baseline, bufferSize);
+  if (!baseline) return;
+  if (frameBuffer && frameBuffer != baseline) memcpy(frameBuffer, baseline, bufferSize);
 }
 #endif
 

@@ -99,6 +99,10 @@ class FreeInkDisplay {
   // runtime-selected; a single-device build gets exactly that panel's size.
   static constexpr uint32_t MAX_BUFFER_SIZE = BoardConfig::MAX_FRAMEBUFFER_BYTES;
 
+  // Selected controller/backend identity; nullptr until a driver is selected by begin().
+  // Read-only: never probes hardware or substitutes the board profile default.
+  const char* getControllerName() const;
+
   // Runtime dimensions
   uint16_t getDisplayWidth() const { return displayWidth; }
   uint16_t getDisplayHeight() const { return displayHeight; }
@@ -161,9 +165,8 @@ class FreeInkDisplay {
   void cleanupGrayscaleBuffers(const uint8_t* bwBuffer);
 #ifndef EINK_DISPLAY_SINGLE_BUFFER_MODE
   // Restore controller RAM and frameBuffer to the BW baseline after grayscale.
-  // Uses frameBufferActive as the source (falls back to frameBuffer when the
-  // secondary buffer has been released). Call once per page-turn after
-  // displayGrayBuffer() to ensure the next BW draw targets a valid BW frame.
+  // Only frameBufferActive holds the displayed frame. If the secondary was lent
+  // or released, invalidate the driver's baseline because frameBuffer is plane scratch.
   void cleanupGrayscaleWithPreviousBuffer();
 #endif
 

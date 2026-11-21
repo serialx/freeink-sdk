@@ -11,6 +11,7 @@ class RustPanelDriver : public PanelDriver {
   RustPanelDriver(uint32_t controller, void* storage, uint32_t storageSize, uint32_t variant, const void* config,
                   uint32_t configSize);
   ~RustPanelDriver() override;
+  const char* controllerName() const override;
   uint32_t spiHz() const override;
   BusyPolarity busyPolarity() const override;
   PanelGeometry geometry() const override;

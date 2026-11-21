@@ -14,3 +14,6 @@ with tempfile.TemporaryDirectory(prefix="freeink-pro-") as directory:
         exe=compile_test(root, HERE/'test_pro.cpp', flags, facade=True)
         for args in ([], ['sticky'], ['metalio']):
             subprocess.run([str(exe), *args], check=True)
+    exe = compile_test(root, HERE / 'test_controller_identity.cpp', flags, facade=True)
+    subprocess.run([str(exe)], check=True)
+    print('SSD1677/UC8179/UC8279 facade controller identity and unselected state passed')

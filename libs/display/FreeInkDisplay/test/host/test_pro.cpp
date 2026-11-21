@@ -174,9 +174,51 @@ static void testAsyncFrame() {
   const auto& noShadow = display._bus.writes.back();
   assert(std::equal(submitted.begin() + firstRow * 100, submitted.begin() + (firstRow + 1) * 100,
                     noShadow.bytes.begin() + offset));
+#else
+  std::memcpy(display.getFrameBuffer(), submitted.data(), submitted.size());
+  display.displayBufferAsync(FreeInkDisplay::FAST_REFRESH);
+  assert(display.isRefreshPending());
+  std::memcpy(display.getFrameBuffer(), redrawn.data(), redrawn.size());
+  assert(display.releaseSecondaryBuffer());
+  assert(!display.isRefreshPending());
+  const auto& released = display._bus.writes.back();
+  assert(released.command == 0x10 && released.bytes.size() == 60000);
+  assert(std::equal(submitted.begin() + firstRow * 100, submitted.begin() + (firstRow + 1) * 100,
+                    released.bytes.begin() + offset));
 #endif
   display.releaseBuffers();
 }
+
+#ifndef EINK_DISPLAY_SINGLE_BUFFER_MODE
+static void testGrayCleanupBaseline() {
+  const auto page = frame(51), plane = frame(77);
+  enum class Secondary { Resident, Released, Lent };
+  for (auto secondary : {Secondary::Resident, Secondary::Released, Secondary::Lent}) {
+    TestUc8279X4 driver;
+    FreeInkDisplay display(12, 11, 13, 18, 14, 6);
+    display.begin();
+    display._driver = &driver;
+    driver.begin(display._bus);
+    std::copy(page.begin(), page.end(), display.getFrameBuffer());
+    display.displayBuffer(FreeInkDisplay::FAST_REFRESH);
+    if (secondary == Secondary::Released) assert(display.releaseSecondaryBuffer());
+    if (secondary == Secondary::Lent) assert(display.borrowSecondaryBuffer(nullptr));
+    std::copy(plane.begin(), plane.end(), display.getFrameBuffer());
+    display._bus.clear();
+    display.cleanupGrayscaleWithPreviousBuffer();
+    if (secondary == Secondary::Resident) {
+      assert(std::count_if(display._bus.writes.begin(), display._bus.writes.end(),
+                           [](const auto& w) { return w.command == 0x10; }) == 1);
+      assert(std::equal(page.begin(), page.end(), display.getFrameBuffer()));
+    } else {
+      for (const auto& w : display._bus.writes) assert(w.command != 0x10 && w.command != 0x13);
+      assert(std::equal(plane.begin(), plane.end(), display.getFrameBuffer()));
+    }
+    if (secondary == Secondary::Lent) assert(display.returnSecondaryBuffer());
+    display.releaseBuffers();
+  }
+}
+#endif
 
 // A driver with no grayscale implementation must never advertise support.
 class BwOnlyDriver : public PanelDriver {
@@ -651,5 +693,8 @@ int main(int argc, char** argv) {
   testSsd();
   testAsyncFrame<TestUc8179>();
   testAsyncFrame<TestUc8279X4>();
+#ifndef EINK_DISPLAY_SINGLE_BUFFER_MODE
+  testGrayCleanupBaseline();
+#endif
   std::puts("Pro plane bytes, transaction counts, clean refreshes, power state and async frame ownership passed");
 }

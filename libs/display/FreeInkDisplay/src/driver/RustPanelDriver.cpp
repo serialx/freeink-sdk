@@ -597,6 +597,26 @@ RustPanelDriver::~RustPanelDriver() {
 void RustPanelDriver::controllerExtra(uint32_t operation, const void* payload, uint32_t size) {
   if (storage_) xp_display_extra(storage_, operation, payload, size, 1);
 }
+const char* RustPanelDriver::controllerName() const {
+  switch (controller_) {
+    case XP_DISPLAY_SSD1677:
+    case XP_DISPLAY_PAPER_MONO:
+      return "SSD1677";
+    case XP_DISPLAY_SSD2677:
+      return "SSD2677";
+    case XP_DISPLAY_UC8253_X3:
+      return "UC8253";
+    case XP_DISPLAY_UC8179:
+      return "UC8179";
+    case XP_DISPLAY_UC8279_X3:
+    case XP_DISPLAY_UC8279_X4:
+      return "UC8279";
+    case XP_DISPLAY_UC8279C_A4:
+      return "UC8279C";
+    default:
+      return nullptr;
+  }
+}
 uint32_t RustPanelDriver::spiHz() const {
   return BoardConfig::ACTIVE.displaySpiHz != 0
              ? BoardConfig::ACTIVE.displaySpiHz
