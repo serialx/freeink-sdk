@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <type_traits>
+#include <utility>
 #include <vector>
 // Inspect private state without adding test-only methods to the SDK API.
 #define private public
@@ -38,6 +39,76 @@ static Bytes frame(unsigned seed) {
   Bytes b(48000);
   for (size_t i = 0; i < b.size(); ++i) b[i] = uint8_t((i * 37 + i / 100 * 11 + seed) ^ (i >> 8));
   return b;
+}
+
+static void testUc8279X4Window() {
+  TestUc8279X4 driver;
+  EpdBus bus;
+  const auto first = frame(3), next = frame(89);
+  const Bytes regional{0x01, 0x08, 0x01, 0x1f, 0x01, 0x12, 0x01, 0x23, 0x01};
+  const Bytes whole{0x00, 0x00, 0x03, 0x1f, 0x00, 0x78, 0x02, 0x57, 0x01};
+  const auto checkRegion = [&](const Bytes& expected) {
+    unsigned windows = 0;
+    for (const auto& write : bus.writes) {
+      if (write.command != 0x90) continue;
+      assert(write.bytes == expected && write.transactions == 9);
+      ++windows;
+    }
+    assert(windows == (expected.empty() ? 0u : 1u));
+  };
+  driver.begin(bus);
+  bus.clear();
+  driver.displayWindow(bus, first.data(), nullptr, 264, 154, 24, 18, false);
+  checkRegion({});  // Cold start must establish OLD with a full refresh.
+
+  bus.clear();
+  driver.displayWindow(bus, next.data(), nullptr, 264, 154, 24, 18, true);
+  checkRegion(regional);
+  // Upstream 5e94fe74: full NEW, regional DRF, full OLD, then analog power-off.
+  Bytes commands;
+  for (const auto& write : bus.writes) commands.push_back(write.command);
+  assert(commands == Bytes({0x13, 0x50, 0xe0, 0xe5, 0x03, 0xe1, 0x91, 0x90, 0x00, 0x12, 0x92, 0x10, 0x02}));
+  assert(bus.writes[1].bytes == Bytes({0xd7}) && bus.writes[2].bytes == Bytes({0x02}));
+  assert(bus.writes[3].bytes == Bytes({0x5a}) && bus.writes[4].bytes == Bytes({0x20}));
+  assert(bus.writes[5].bytes == Bytes({0x02}) && bus.writes[8].bytes == Bytes({0x17, 0x4d}));
+  Bytes padded(12000, 0xff);
+  padded.insert(padded.end(), next.begin(), next.end());
+  assert(bus.newAtRefresh == padded && bus.oldPlane == padded && bus.waits == 2);
+  padded.assign(12000, 0xff);
+  padded.insert(padded.end(), first.begin(), first.end());
+  assert(bus.oldAtRefresh == padded);
+
+  for (const auto& xw : {std::pair{265, 24}, std::pair{264, 25}, std::pair{792, 16}, std::pair{65528, 24},
+                         std::pair{264, 0}}) {
+    bus.clear();
+    driver.displayWindow(bus, next.data(), nullptr, xw.first, 154, xw.second, 18, false);
+    checkRegion(whole);
+  }
+  for (const auto& yh : {std::pair{479, 2}, std::pair{154, 0}, std::pair{65535, 18}}) {
+    bus.clear();
+    driver.displayWindow(bus, next.data(), nullptr, 264, yh.first, 24, yh.second, false);
+    checkRegion(whole);
+  }
+
+  driver.beginGrayscale(bus, next.data(), GrayscaleMode::Overlay, RefreshMode::Half, false);
+  driver.copyGrayscaleLsb(bus, first.data());
+  driver.copyGrayscaleMsb(bus, next.data());
+  driver.displayGray(bus, next.data(), false, nullptr, false);
+  driver.cleanupGrayscaleBuffers(bus, next.data());
+  bus.clear();
+  driver.displayWindow(bus, next.data(), nullptr, 264, 154, 24, 18, false);
+  checkRegion(whole);  // Post-gray re-drive must reach the whole panel.
+
+  driver.requestResync(0);
+  bus.clear();
+  driver.displayWindow(bus, next.data(), nullptr, 264, 154, 24, 18, false);
+  checkRegion({});
+  bus.clear();
+  driver.displayWindow(bus, first.data(), nullptr, 264, 154, 24, 18, false);
+  checkRegion(regional);
+  bus.clear();
+  driver.display(bus, next.data(), nullptr, RefreshMode::Fast, false);
+  checkRegion(whole);  // A regional request never leaks into the next refresh.
 }
 
 template <class Driver>
@@ -678,6 +749,7 @@ int main(int argc, char** argv) {
     return 0;
   }
   testUc8179GrayShadeSplit();
+  testUc8279X4Window();
   testUc8279X4WaveformSelection();
   testDirectSleep<TestUc8179>();
   testDirectSleep<TestUc8279X4>();
