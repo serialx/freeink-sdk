@@ -279,7 +279,9 @@ class FreeInkDisplay {
   // True when the runtime-selected panel is the Xteink X3 (X4 returns false).
   bool isX3Mode() const { return _panelSel == PanelSel::X3; }
 
-  // EXPERIMENTAL: Windowed update - display only a rectangular region
+  // EXPERIMENTAL: Display a rectangular region. UC8279 800x480 copies the
+  // full framebuffer to OLD after the refresh. Keep pixels outside the region
+  // equal to the displayed frame, or request a whole-frame refresh.
   void displayWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool turnOffScreen = false);
   void displayGrayBuffer(bool turnOffScreen = false, const unsigned char* lut = nullptr, bool factoryMode = false);
   void displayGrayCalibration(uint16_t customX, uint16_t customY, uint16_t customW, uint16_t customH);

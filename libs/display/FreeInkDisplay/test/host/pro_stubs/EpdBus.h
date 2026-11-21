@@ -59,6 +59,7 @@ class EpdBus {
   std::vector<size_t> busyWaitWriteCounts;
   std::vector<size_t> refreshWaitWriteCounts;
   std::vector<unsigned long> busyWaitElapsedMs;
+  std::vector<unsigned long> refreshWaitElapsedMs;
   std::vector<BusyPolarity> busyWaitPolarities;
   bool transaction = false;
   unsigned waits = 0, refreshes = 0, powerOns = 0;
@@ -96,6 +97,7 @@ class EpdBus {
     busyWaitPolarities.clear();
     refreshWaitWriteCounts.clear();
     busyWaitElapsedMs.clear();
+    refreshWaitElapsedMs.clear();
   }
   void begin(const EpdPins&, uint32_t, BusyPolarity, int8_t = -1, int8_t = -1) {}
   void cmd(uint8_t c) {
@@ -145,6 +147,7 @@ class EpdBus {
   void waitRefreshComplete(const char* = nullptr) {
     assert(!transaction);
     refreshWaitWriteCounts.push_back(writes.size());
+    refreshWaitElapsedMs.push_back(fakeDelayMs);
     ++waits;
   }
   bool isBusy() const { return false; }
