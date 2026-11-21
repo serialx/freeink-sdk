@@ -637,8 +637,10 @@ BusyPolarity RustPanelDriver::busyPolarity() const {
     case XP_DISPLAY_UC8279_X4:
       return BusyPolarity::UcIdleHigh;
     case XP_DISPLAY_UC8279C_A4:
-    case XP_DISPLAY_SSD2677:
       return BusyPolarity::ActiveLow;
+    case XP_DISPLAY_SSD2677:
+      return BoardConfig::ACTIVE.board == BoardConfig::Board::Sticky ? BusyPolarity::ActiveLowReady
+                                                                     : BusyPolarity::ActiveLow;
     default:
       return BusyPolarity::X3TwoPhase;
   }

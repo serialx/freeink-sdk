@@ -2,6 +2,7 @@
 // waveform latch per mode, full refresh old == new, rows bottom-to-top, fast
 // refresh keeping the rails on.
 #include <SPI.h>  // stub: counts shared-bus restarts
+#include <esp_heap_caps.h>
 
 #include <cassert>
 #include <cstdio>
@@ -28,7 +29,7 @@ static int count(const EpdBus& bus, uint8_t command) {
   return n;
 }
 
-int main() {
+int main(int argc, char**) {
   // An SSD2677 answers CMD 0x70 with 0x07 first; the probe restarts the shared
   // SPI bus on its existing pins (incl. the SD card's MISO) afterwards.
   static const uint8_t rev[3] = {0x07, 0x01, 0x01};
@@ -38,7 +39,24 @@ int main() {
   auto& s = ssd2677Driver();
 
   EpdBus bus;
+  failPanelPsram = argc > 1;
   s.begin(bus);
+  assert(s.busyPolarity() == BusyPolarity::ActiveLowReady);
+  assert(bus.busyWaitWriteCounts == std::vector<size_t>({0, 1, 10}));
+  assert(bus.busyWaitPolarities == std::vector<BusyPolarity>(3, BusyPolarity::ActiveLowReady));
+  if (failPanelPsram) {
+    // Upstream 252e9bb: requested FAST black then white, with no old plane.
+    for (uint8_t color : {uint8_t{0x00}, uint8_t{0xFF}}) {
+      const Bytes page(48000, color);
+      bus.clear();
+      s.display(bus, page.data(), nullptr, RefreshMode::Fast, false);
+      assert(*lastData(bus, 0xE6) == Bytes({0xEE}));
+      assert(*lastData(bus, 0x10) == Bytes(96000, color));
+      assert(bus.writes.back().command == 0x02 && bus.writes.back().bytes == Bytes({0}));
+    }
+    std::puts("Sticky SSD2677: previous-plane allocation failure uses full refresh");
+    return 0;
+  }
   assert(*lastData(bus, 0x00) == Bytes({0x2F, 0x0E}));
   assert(*lastData(bus, 0x61) == Bytes({0x03, 0x20, 0x02, 0xA8}));
   assert(*lastData(bus, 0x30) == Bytes({0x08}) && *lastData(bus, 0xE9) == Bytes({0x01}));

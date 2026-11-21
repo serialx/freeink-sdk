@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 namespace freeink {
-enum class BusyPolarity { ActiveHigh, ActiveLow, X3TwoPhase, UcIdleHigh };
+enum class BusyPolarity : uint8_t { ActiveHigh, ActiveLow, X3TwoPhase, UcIdleHigh, ActiveLowReady };
 struct EpdPins {
   int8_t sclk, mosi, cs, dc, rst, busy, powerEnable = -1;
 };
@@ -51,6 +51,8 @@ class EpdBus {
     EpdBus* _bus;
   };
   std::vector<Write> writes;
+  std::vector<size_t> busyWaitWriteCounts;
+  std::vector<BusyPolarity> busyWaitPolarities;
   bool transaction = false;
   unsigned waits = 0, refreshes = 0, powerOns = 0;
   uint8_t interval = 0;
@@ -81,6 +83,8 @@ class EpdBus {
     assert(!transaction);
     writes.clear();
     waits = 0;
+    busyWaitWriteCounts.clear();
+    busyWaitPolarities.clear();
   }
   void begin(const EpdPins&, uint32_t, BusyPolarity, int8_t = -1, int8_t = -1) {}
   void cmd(uint8_t c) {
@@ -117,9 +121,13 @@ class EpdBus {
     data(p, n);
   }
   void reset(uint16_t = 0) {}
-  void waitBusy(BusyPolarity, const char* tag) { waitBusy(tag); }
+  void waitBusy(BusyPolarity polarity, const char* tag) {
+    busyWaitPolarities.push_back(polarity);
+    waitBusy(tag);
+  }
   void waitBusy(const char* = nullptr) {
     assert(!transaction);
+    busyWaitWriteCounts.push_back(writes.size());
     ++waits;
   }
   void waitRefreshComplete(const char* = nullptr) {
