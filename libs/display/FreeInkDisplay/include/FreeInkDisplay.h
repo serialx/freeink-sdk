@@ -203,6 +203,9 @@ class FreeInkDisplay {
   // can skip overlap scaffolding (e.g. whole-plane grayscale buffers) when
   // there is nothing to overlap.
   bool supportsAsyncRefresh() const;
+  // Picco only. Hold the bus/render lock and call after grayscale cleanup.
+  // Completes pending refreshes and powers off analog circuitry with RAM retained.
+  void powerOffBetweenFrames();
   // True when the selected driver can use an ordinary deferred B/W refresh as
   // the base for a following grayscale pass.
   bool supportsAsyncGrayscaleBase() const;

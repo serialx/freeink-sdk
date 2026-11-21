@@ -5,6 +5,7 @@
 #include <cstring>
 #include <vector>
 #define private public
+#include "FreeInkDisplay.h"
 #include "golden_luts/Ssd1677Luts.h"
 #include "golden_luts/Ssd2677Luts.h"
 #include "src/driver/Ssd1677Driver.h"
@@ -19,6 +20,61 @@ static uint8_t lastRegister(const EpdBus& bus, uint8_t command) {
     if (i->command == command && !i->bytes.empty()) return i->bytes[0];
   assert(false);
   return 0;
+}
+
+static void expectSe0400PowerCycle(const EpdBus& bus) {
+  assert(bus.writes.size() >= 3);
+  const size_t end = bus.writes.size();
+  assert(bus.writes[end - 3].command == 0x04 && bus.writes[end - 3].bytes.empty());
+  assert(bus.writes[end - 2].command == 0x12 && bus.writes[end - 2].bytes == Bytes({0}));
+  assert(bus.writes[end - 1].command == 0x02 && bus.writes[end - 1].bytes == Bytes({0}));
+  assert(bus.busyWaitWriteCounts == std::vector<size_t>({end - 2, end}));
+  assert(bus.waits == 3);  // PON completion, refresh completion and POF completion
+}
+
+static void expectIdlePower() {
+  FreeInkDisplay frame(1, 2, 3, 4, 5, 6);
+  frame.begin();
+  auto& bus = frame._bus;
+  const auto border = lastRegister(bus, 0x3c);
+  frame.clearScreen(0xaa);
+  frame.displayBuffer(FreeInkDisplay::FULL_REFRESH, false);
+  bus.clear();
+  frame.clearScreen(0x55);
+  frame.displayBufferAsyncNoShadow();
+  assert(frame._refreshPending && bus.waits == 0);
+  const auto fastSeq = lastRegister(bus, 0x22);
+  const auto before = bus.writes.size();
+  fakeDelayMs = 0;
+  frame.powerOffBetweenFrames();
+  assert(!frame._refreshPending);
+  if ((fastSeq & 3) == 0) {
+    assert(bus.writes.size() >= before + 3);
+    const auto end = bus.writes.size();
+    assert(bus.writes[end - 3].command == 0x3c && bus.writes[end - 3].bytes == Bytes({border}));
+    assert(bus.writes[end - 2].command == 0x22 && bus.writes[end - 2].bytes == Bytes({3}));
+    assert(bus.writes[end - 1].command == 0x20 && bus.writes[end - 1].bytes.empty());
+    assert(bus.waits == 2 && fakeDelayMs == 1);
+  } else {
+    assert(bus.waits == 1 && fakeDelayMs == 0);
+  }
+  bus.clear();
+  frame.powerOffBetweenFrames();
+  assert(bus.writes.empty() && bus.waits == 0);
+  frame.clearScreen(0xaa);
+  frame.displayBufferAsyncNoShadow();
+  assert(lastRegister(bus, 0x22) == fastSeq);
+  frame.waitRefreshComplete();
+
+  const Bytes gray(48000, 0x55);
+  frame._driver->displayGray(bus, gray.data(), false, nullptr, false);
+  frame._driver->cleanupGrayscaleBuffers(bus, gray.data());
+  bus.clear();
+  fakeDelayMs = 0;
+  frame.powerOffBetweenFrames();
+  assert(bus.writes.size() == 3 && bus.waits == 1 && fakeDelayMs == 1);
+  assert(bus.writes[0].command == 0x3c && bus.writes[1].command == 0x22 && bus.writes[2].command == 0x20);
+  assert(lastRegister(bus, 0x22) == 3);
 }
 
 static const Bytes* lastLut(const EpdBus& bus) {
@@ -81,6 +137,9 @@ int main(int argc, char** argv) {
     auto& s = ssd2677Driver();
     EpdBus bus;
     s.begin(bus);
+    assert(s.busyPolarity() == BusyPolarity::ActiveLow);
+    assert(bus.busyWaitWriteCounts == std::vector<size_t>({0, 12}));
+    assert(bus.busyWaitPolarities == std::vector<BusyPolarity>(2, BusyPolarity::ActiveLow));
     assert(lastRegister(bus, 0x00) == 0x27 && lastRegister(bus, 0xE9) == 0x01);
     Bytes oldFb(48000, 0xFF), newFb(48000, 0xFF);
     newFb[0] = 0x0F;  // left 4 px black, right 4 px white; old all white
@@ -97,12 +156,14 @@ int main(int argc, char** argv) {
       if (w.command == 0x20) lut = &w.bytes;
     assert(lut && *lut == Bytes(lut_picco_se0400_full, lut_picco_se0400_full + 535));
     assert(lastRegister(bus, 0x12) == 0x00);
+    expectSe0400PowerCycle(bus);
     bus.clear();
     s.display(bus, newFb.data(), oldFb.data(), RefreshMode::Fast, true);
     for (const auto& w : bus.writes)
       if (w.command == 0x20) lut = &w.bytes;
     assert(*lut == Bytes(lut_picco_se0400_fast, lut_picco_se0400_fast + 535));
     assert(lastRegister(bus, 0x02) == 0x00);
+    expectSe0400PowerCycle(bus);
 
     // Regression (single-buffer ghosting): the host builds with
     // EINK_DISPLAY_SINGLE_BUFFER_MODE, so `prev` is ALWAYS null. The driver must
@@ -122,6 +183,7 @@ int main(int argc, char** argv) {
       if (w.command == 0x10) data = &w.bytes;
     assert(data && data->size() == 96000);
     assert((*data)[0] == 0x55 && (*data)[100] == 0x55 && (*data)[95999] == 0x55);
+    expectSe0400PowerCycle(bus);
     // Overlay AA: LSB mask -> low bit, MSB mask -> high bit, slot-5 LUT.
     assert(s.grayscaleCapabilities(GrayscaleMode::Overlay).supported());
     assert(!s.grayscaleCapabilities(GrayscaleMode::Absolute).supported());
@@ -140,11 +202,17 @@ int main(int argc, char** argv) {
     for (const auto& w : bus.writes)
       if (w.command == 0x20) lut = &w.bytes;
     assert(*lut == Bytes(lut_picco_se0400_gray, lut_picco_se0400_gray + 535));
+    expectSe0400PowerCycle(bus);
+    FreeInkDisplay frame(1, 2, 3, 4, 5, 6);
+    frame.selectDriver();
+    frame.powerOffBetweenFrames();
+    assert(frame._bus.writes.empty());  // Already off after the gray refresh.
     s.deepSleep(bus);
     assert(lastRegister(bus, 0x07) == 0xA5);
     std::printf("Picco se0400: probe, init, packing and refresh passed\n");
     return 0;
   }
+  expectIdlePower();
 
   auto& d = ssd1677Driver();
   // Sleep latches the display pins; the probe must release them before driving RESET.

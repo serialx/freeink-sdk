@@ -11,7 +11,8 @@ inline unsigned long millis() {
   static unsigned long t;
   return ++t;
 }
-inline void delay(unsigned long) {}
+inline unsigned long fakeDelayMs;
+inline void delay(unsigned long ms) { fakeDelayMs += ms; }
 inline int digitalRead(int) { return 0; }
 
 #define LOW 0

@@ -279,6 +279,9 @@ class PanelDriver {
     (void)enabled;
     (void)data;
   }
+#if FREEINK_DEVICE_PICCO
+  virtual void powerOffBetweenFrames(EpdBus& bus) { (void)bus; }
+#endif
 };
 
 }  // namespace freeink

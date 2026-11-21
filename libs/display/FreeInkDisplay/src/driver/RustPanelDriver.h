@@ -52,6 +52,9 @@ class RustPanelDriver : public PanelDriver {
   void setFastRefreshCutoffMs(uint16_t ms) override;
   void setHoldPeriodicFull(bool hold) override;
   void setCustomLut(EpdBus& bus, bool enabled, const unsigned char* lut) override;
+#if FREEINK_DEVICE_PICCO
+  void powerOffBetweenFrames(EpdBus& bus) override;
+#endif
 
  protected:
   void controllerExtra(uint32_t operation, const void* payload, uint32_t size);

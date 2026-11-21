@@ -850,6 +850,13 @@ void RustPanelDriver::abortPostRefresh() {
 }
 void RustPanelDriver::runMaintenance(EpdBus& bus) { invoke(&bus, XP_DISPLAY_OP_MAINTENANCE); }
 void RustPanelDriver::controllerIdle(EpdBus& bus) { invoke(&bus, XP_DISPLAY_OP_IDLE); }
+#if FREEINK_DEVICE_PICCO
+void RustPanelDriver::powerOffBetweenFrames(EpdBus& bus) {
+  if (controller_ == XP_DISPLAY_SSD1677 || controller_ == XP_DISPLAY_SSD2677) {
+    invoke(&bus, XP_DISPLAY_OP_POWER_OFF_BETWEEN_FRAMES);
+  }
+}
+#endif
 void RustPanelDriver::requestCompleteWaveformNextRefresh() { invoke(nullptr, XP_DISPLAY_OP_COMPLETE_NEXT); }
 void RustPanelDriver::setFullRefreshCompletesWaveform(bool enabled) {
   auto r = request(XP_DISPLAY_OP_FULL_COMPLETES);
