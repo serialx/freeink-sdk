@@ -29,7 +29,24 @@ static void expectSe0400PowerCycle(const EpdBus& bus) {
   assert(bus.writes[end - 2].command == 0x12 && bus.writes[end - 2].bytes == Bytes({0}));
   assert(bus.writes[end - 1].command == 0x02 && bus.writes[end - 1].bytes == Bytes({0}));
   assert(bus.busyWaitWriteCounts == std::vector<size_t>({end - 2, end}));
+  assert(bus.refreshWaitWriteCounts == std::vector<size_t>({end - 1}));
   assert(bus.waits == 3);  // PON completion, refresh completion and POF completion
+}
+
+static void expectIdleShutdown(const EpdBus& bus, uint8_t border) {
+  const size_t end = bus.writes.size();
+  assert(end >= 3);
+  assert(bus.writes[end - 3].command == 0x3c && bus.writes[end - 3].bytes == Bytes({border}));
+  assert(bus.writes[end - 2].command == 0x22 && bus.writes[end - 2].bytes == Bytes({3}));
+  assert(bus.writes[end - 1].command == 0x20 && bus.writes[end - 1].bytes.empty());
+  assert(bus.busyWaitWriteCounts == std::vector<size_t>({end}));
+  assert(bus.busyWaitElapsedMs == std::vector<unsigned long>({bus.writes.back().elapsedMs + 1}));
+}
+
+static const Bytes* lastPlane(const EpdBus& bus, uint8_t command) {
+  for (auto i = bus.writes.rbegin(); i != bus.writes.rend(); ++i)
+    if (i->command == command) return &i->bytes;
+  return nullptr;
 }
 
 static void expectIdlePower() {
@@ -48,14 +65,13 @@ static void expectIdlePower() {
   fakeDelayMs = 0;
   frame.powerOffBetweenFrames();
   assert(!frame._refreshPending);
+  assert(bus.refreshWaitWriteCounts == std::vector<size_t>({before}));
   if ((fastSeq & 3) == 0) {
     assert(bus.writes.size() >= before + 3);
-    const auto end = bus.writes.size();
-    assert(bus.writes[end - 3].command == 0x3c && bus.writes[end - 3].bytes == Bytes({border}));
-    assert(bus.writes[end - 2].command == 0x22 && bus.writes[end - 2].bytes == Bytes({3}));
-    assert(bus.writes[end - 1].command == 0x20 && bus.writes[end - 1].bytes.empty());
+    expectIdleShutdown(bus, border);
     assert(bus.waits == 2 && fakeDelayMs == 1);
   } else {
+    assert(bus.busyWaitWriteCounts.empty());
     assert(bus.waits == 1 && fakeDelayMs == 0);
   }
   bus.clear();
@@ -66,15 +82,31 @@ static void expectIdlePower() {
   assert(lastRegister(bus, 0x22) == fastSeq);
   frame.waitRefreshComplete();
 
-  const Bytes gray(48000, 0x55);
+  const Bytes gray(48000, 0x55), baseline(48000, 0xaa), next(48000, 0x3c);
+  bus.clear();
+  frame._driver->copyGrayscaleLsb(bus, gray.data());
+  frame._driver->copyGrayscaleMsb(bus, gray.data());
   frame._driver->displayGray(bus, gray.data(), false, nullptr, false);
-  frame._driver->cleanupGrayscaleBuffers(bus, gray.data());
+  assert(lastPlane(bus, 0x26) && *lastPlane(bus, 0x26) == gray);
+  frame._driver->cleanupGrayscaleBuffers(bus, baseline.data());
+  assert(lastPlane(bus, 0x26) && *lastPlane(bus, 0x26) == baseline);
   bus.clear();
   fakeDelayMs = 0;
   frame.powerOffBetweenFrames();
   assert(bus.writes.size() == 3 && bus.waits == 1 && fakeDelayMs == 1);
-  assert(bus.writes[0].command == 0x3c && bus.writes[1].command == 0x22 && bus.writes[2].command == 0x20);
-  assert(lastRegister(bus, 0x22) == 3);
+  assert(bus.refreshWaitWriteCounts.empty());
+  expectIdleShutdown(bus, border);
+  bus.clear();
+  // The controller must consume the RED baseline restored by cleanup. A host
+  // previous plane would hide a shutdown that rewrites controller RAM.
+  assert(frame._driver->displayStart(bus, next.data(), nullptr, RefreshMode::Fast, false));
+  assert(lastRegister(bus, 0x22) == fastSeq);
+  assert(lastPlane(bus, 0x24) && *lastPlane(bus, 0x24) == next);
+  assert(!lastPlane(bus, 0x26));
+  assert(bus.writes.back().command == 0x20 && bus.waits == 0);
+  const auto nextActivation = bus.writes.size();
+  frame._driver->displayFinish(bus, next.data());
+  assert(bus.refreshWaitWriteCounts == std::vector<size_t>({nextActivation}));
 }
 
 static const Bytes* lastLut(const EpdBus& bus) {

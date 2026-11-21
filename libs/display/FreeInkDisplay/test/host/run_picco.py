@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compile the SSD1677/SSD2677 drivers as Picco and Sticky builds and check each panel."""
 from pathlib import Path
-from rust_host import prepare, compile_test
+from rust_host import check_trace, prepare, compile_test
 import os
 import shutil
 import subprocess
@@ -74,10 +74,15 @@ inline FakeSerial Serial;
 
 
 with tempfile.TemporaryDirectory(prefix="freeink-picco-test-") as directory:
-    exe = build("Picco", "FREEINK_DEVICE_PICCO", "test_picco.cpp", directory)
-    for panel in ("yrd", "depg", "opm", "unknown", "se0400"):
+    root = Path(directory)
+    trace = root / 'ssd2677.trace'
+    env = dict(os.environ, FREEINK_RECORD_TRACE=str(trace))
+    exe = build("Picco", "FREEINK_DEVICE_PICCO", "test_picco.cpp", root / 'picco')
+    for panel in ("yrd", "depg", "opm", "unknown"):
         subprocess.run([str(exe), panel], check=True)
-with tempfile.TemporaryDirectory(prefix="freeink-sticky-test-") as directory:
-    exe = build("Sticky", "FREEINK_DEVICE_STICKY", "test_sticky_ssd2677.cpp", directory)
-    subprocess.run([str(exe)], check=True)
-    subprocess.run([str(exe), "no-old-plane"], check=True)
+    subprocess.run([str(exe), 'se0400'], check=True, env=env)
+    exe = build("Sticky", "FREEINK_DEVICE_STICKY", "test_sticky_ssd2677.cpp", root / 'sticky')
+    subprocess.run([str(exe)], check=True, env=env)
+    subprocess.run([str(exe), "no-old-plane"], check=True, env=env)
+    # SE0400, Sticky and Sticky no-old-plane on SDK 5e94fe7480f019c89fbf691aef87523eb1b46704.
+    check_trace(trace, 1541504, 'f89c04b9ac319cdf406b388272caeff32f72875804a5ee58ec00b67e0b3613a1')
